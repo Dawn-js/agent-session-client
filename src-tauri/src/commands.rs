@@ -38,7 +38,7 @@ pub struct AppState {
 pub fn load_config(state: State<AppState>, path: String) -> Result<ConfigView, String> {
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let cfg = parse_config(&text)?;
-    validate(&cfg)?;
+    validate(&cfg).map_err(|e| e.join("; "))?;
     let view = ConfigView {
         hosts: cfg.hosts.iter().map(|h| HostView { name: h.name.clone(), host: h.host.clone() }).collect(),
         agents: cfg.agents.iter().map(|a| AgentView { id: a.id.clone(), label: a.label.clone() }).collect(),
@@ -57,7 +57,13 @@ pub fn start_session(
 ) -> Result<String, String> {
     let cfg = state.config.lock().unwrap().clone().ok_or("config not loaded")?;
     let target = cfg.to_ssh_target(&host).ok_or_else(|| format!("unknown host: {host}"))?;
-    let agent_cfg = cfg.agents.iter().find(|a| a.id == agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
+    let agent_cmd = cfg
+        .agents
+        .iter()
+        .find(|a| a.id == agent)
+        .ok_or_else(|| format!("unknown agent: {agent}"))?
+        .cmd
+        .clone();
 
     let session_name = if project.trim().is_empty() { host.clone() } else { format!("{agent}-{project}") };
     let id = session_name.clone();
@@ -80,7 +86,7 @@ pub fn start_session(
     let app_for_thread = app.clone();
     let id_for_thread = id.clone();
     std::thread::spawn(move || {
-        run_session(msg_tx, target, session_name, agent_cfg.cmd.clone(), 80, 24, in_rx, kill_flag);
+        run_session(msg_tx, target, session_name, agent_cmd, 80, 24, in_rx, kill_flag);
     });
 
     // 消息泵：把 RunnerMsg 转成前端事件；runner 结束（msg_rx 关闭）后清理会话表
