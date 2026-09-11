@@ -4,6 +4,7 @@ pub mod config;
 pub mod exit;
 pub mod reconnect;
 pub mod session;
+pub mod transport;
 
 pub const PROJECT_NAME: &str = "agent-session-client";
 
