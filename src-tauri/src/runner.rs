@@ -156,9 +156,11 @@ pub fn run_session(
         if closed {
             if kill_remote_on_close.load(Ordering::SeqCst) {
                 let remote = format!("tmux kill-session -t {}", shell_quote(&session));
-                let _ = StdCommand::new("ssh")
-                    .args(["-o", "BatchMode=yes", &destination(&target), &remote])
-                    .status();
+                let mut argv = vec!["-o".to_string(), "BatchMode=yes".to_string()];
+                argv.extend(target.extra_ssh_args.iter().cloned());
+                argv.push(destination(&target));
+                argv.push(remote);
+                let _ = StdCommand::new("ssh").args(&argv).status();
             }
             let _ = tx.send(RunnerMsg::State(SessionState::Closed));
             return;
