@@ -7,12 +7,42 @@ fn shim_path() -> String {
     format!("{}/tests/fixtures/fake-ssh.sh", env!("CARGO_MANIFEST_DIR"))
 }
 
+// Windows 下 CreateProcessW 无法直接执行 shebang 脚本（os error 193），
+// 需要经由 bash 调起 fixture。查找顺序：
+//   1. FAKE_SSH_BASH 环境变量（显式指定）
+//   2. 常见 Git for Windows 安装路径
+//   3. PATH 上的 bash.exe
+#[cfg(windows)]
+fn bash_on_windows() -> String {
+    if let Ok(p) = std::env::var("FAKE_SSH_BASH") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    for p in [
+        "C:\\Program Files\\Git\\bin\\bash.exe",
+        "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+    ] {
+        if std::path::Path::new(p).exists() {
+            return p.to_string();
+        }
+    }
+    "bash.exe".to_string()
+}
+
 fn argv() -> Vec<String> {
-    vec![shim_path()]
+    let mut cmd = Vec::new();
+    if cfg!(windows) {
+        cmd.push(bash_on_windows());
+    }
+    cmd.push(shim_path());
+    cmd
 }
 
 fn hang_argv() -> Vec<String> {
-    vec![shim_path(), "hang".into()]
+    let mut cmd = argv();
+    cmd.push("hang".into());
+    cmd
 }
 
 #[test]
