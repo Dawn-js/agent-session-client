@@ -227,9 +227,15 @@ fn state_name(s: SessionState) -> &'static str {
 
 #[tauri::command]
 pub fn write_session(state: State<AppState>, id: String, data: String) -> Result<(), String> {
+    // 拦下 Ctrl+C / Ctrl+D / Ctrl+Z / Ctrl+\ —— 误触会让远端 agent 退出，
+    // 其 tmux 会话随之销毁，就再也接不回原来的会话了。
+    let forward = session_core::keys::strip_quit_keys(&data);
+    if forward.is_empty() {
+        return Ok(());
+    }
     let guard = state.inputs.lock().unwrap();
     let tx = guard.get(&id).ok_or_else(|| format!("unknown session: {id}"))?;
-    tx.send(data.into_bytes()).map_err(|e| e.to_string())
+    tx.send(forward.into_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
