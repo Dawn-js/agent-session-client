@@ -1,3 +1,5 @@
+pub mod command;
+
 pub const PROJECT_NAME: &str = "agent-session-client";
 
 #[cfg(test)]
