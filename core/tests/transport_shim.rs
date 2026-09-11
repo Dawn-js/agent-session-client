@@ -32,9 +32,8 @@ fn bash_on_windows() -> String {
 
 fn argv() -> Vec<String> {
     let mut cmd = Vec::new();
-    if cfg!(windows) {
-        cmd.push(bash_on_windows());
-    }
+    #[cfg(windows)]
+    cmd.push(bash_on_windows());
     cmd.push(shim_path());
     cmd
 }
