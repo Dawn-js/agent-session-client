@@ -159,7 +159,14 @@ pub fn start_session(
         .cmd
         .clone();
 
-    let session_name = if project.trim().is_empty() { host.clone() } else { format!("{agent}-{project}") };
+    // 会话名按 agent 区分（设计文档：session: hermes / harness / <project>）。
+    // 若用 host 名，同一 host 上切换 agent 会命中同一个 tmux 会话：`-A` 会直接
+    // 附身到旧 agent，而不是启动新 agent。
+    let session_name = if project.trim().is_empty() {
+        agent.clone()
+    } else {
+        format!("{agent}-{project}")
+    };
     let id = session_name.clone();
 
     // C1: 拒绝重复会话——否则旧 runner 的输入通道被覆盖断开，其默认 kill

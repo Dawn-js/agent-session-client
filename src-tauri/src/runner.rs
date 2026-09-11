@@ -18,10 +18,25 @@ pub enum RunnerMsg {
     Notice(String),
 }
 
+/// Windows 下从 GUI 进程启动控制台程序（ssh）会分配一个新控制台窗口，
+/// 于是每次探测/重试都会闪一个 cmd 窗口。加 CREATE_NO_WINDOW 抑制它。
+/// 其他平台为空操作。
+fn hide_console(cmd: &mut StdCommand) -> &mut StdCommand {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// probe 远端会话是否已存在。返回 Ok(true)=已存在，Ok(false)=不存在。
 pub fn probe_session(target: &SshTarget, session: &str) -> Result<bool, SshOutcome> {
     let argv = build_probe_argv(target, session);
-    match StdCommand::new(&argv[0]).args(&argv[1..]).output() {
+    let mut cmd = StdCommand::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    match hide_console(&mut cmd).output() {
         Ok(out) if out.status.success() => Ok(true),
         Ok(out) => {
             if out.status.code() == Some(1) {
@@ -182,7 +197,9 @@ pub fn run_session(
                 argv.extend(target.extra_ssh_args.iter().cloned());
                 argv.push(destination(&target));
                 argv.push(remote);
-                let _ = StdCommand::new("ssh").args(&argv).status();
+                let mut kill_cmd = StdCommand::new("ssh");
+                kill_cmd.args(&argv);
+                let _ = hide_console(&mut kill_cmd).status();
             }
             let _ = tx.send(RunnerMsg::State(SessionState::Closed));
             // R11.2/R11.3: 用户关闭路径也必须 wait 收割子进程，否则留下僵尸
