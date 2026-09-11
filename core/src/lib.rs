@@ -1,6 +1,7 @@
 pub mod backoff;
 pub mod command;
 pub mod config;
+pub mod discovery;
 pub mod exit;
 pub mod reconnect;
 pub mod session;

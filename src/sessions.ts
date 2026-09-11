@@ -12,3 +12,12 @@ export function applyState(sessions: Session[], id: string, state: SessionState)
   }
   return sessions.map((s, i) => (i === idx ? { ...s, state } : s));
 }
+
+/** Human label + CSS tone for each connection state (used by the UI). */
+export const STATE_META: Record<SessionState, { label: string; tone: string }> = {
+  connecting: { label: "连接中", tone: "connecting" },
+  connected: { label: "已连接", tone: "connected" },
+  retrying: { label: "重连中", tone: "retrying" },
+  exited: { label: "已退出", tone: "exited" },
+  closed: { label: "已关闭", tone: "closed" },
+};

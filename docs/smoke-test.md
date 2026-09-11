@@ -2,30 +2,43 @@
 
 ## 准备配置
 
-应用从配置文件读取 host 与 agent 列表，配置路径的解析方式取决于运行模式：
+应用启动时**自动按优先级查找配置文件**，取第一个存在的文件：
+
+1. 环境变量 `VITE_AGENT_SESSION_CONFIG` 指定的路径（可选覆盖）
+2. `<当前工作目录>/config.json`
+3. `<exe 所在目录>/config.json`
+4. **用户配置目录** `<app_config_dir>/config.json`
+   - Windows 通常为 `%APPDATA%\dev.local.agent-session-client\config.json`
+   - 应用内「生成示例配置」就写到这里
+5. `<exe 所在目录>/examples/config.example.json`
+6. `<当前工作目录>/examples/config.example.json`
+
+> 确切路径以应用内「未找到配置文件」面板列出的为准。
 
 **警告：真实配置值（服务器地址、用户名、agent 命令）永远不要提交到仓库。** 仓库中的 `examples/config.example.json` 始终保持 `REPLACE_WITH_*` 占位符。
 
-### 模式一：开发模式（`npm run tauri dev`）
+### 打包后的 exe（从 Releases 下载）
 
-1. 在项目根目录创建一个本地 `config.json`，填入**真实值**（不要提交它；可先把它加进 `.gitignore`）。
-2. 通过环境变量 `VITE_AGENT_SESSION_CONFIG` 指向该文件后，再运行 dev 命令。注意这是 Vite 的**构建期**环境变量，必须在运行 dev/build 命令的同一个 shell 里设置：
-   ```powershell
-   $env:VITE_AGENT_SESSION_CONFIG="config.json"
-   npm run tauri dev
-   ```
+打开应用即可：
 
-### 模式二：打包后的 exe（从 Releases 下载）
+- 若**找不到任何配置**，左侧显示「未找到配置文件」面板并列出上面所有已查找路径，提供：
+  - **生成示例配置**：在用户配置目录（第 4 项）写入模板，随后自动重新加载；
+  - **重新加载**：手动重新查找。
+- 生成后编辑该文件，把 `REPLACE_WITH_*` 换成真实值，再点「重新加载」。
+- 也可手动把 `config.json` 放到 exe 同级目录（第 3 项）。
 
-`load_config` 的路径**相对于进程工作目录**解析。对于下载的 exe，请把真实配置放在 exe 同级的 `examples\config.example.json`（即保持与默认相对路径一致）：
+### 开发模式（`npm run tauri dev`）
 
-```
-<exe 目录>\examples\config.example.json   ← 真实值
+在项目根目录创建 `config.json`（第 2 项）即可；也可用环境变量显式指定（这是 Vite 的**构建期**变量，必须在运行 dev/build 的同一 shell 里设置）：
+
+```powershell
+$env:VITE_AGENT_SESSION_CONFIG="config.json"
+npm run tauri dev
 ```
 
 ### 配置校验
 
-后端会逐字段校验配置。若某个字段为空或格式错误，启动时会看到形如 `hosts[0].name: must not be empty` 的报错——这是配置错误时的预期表现，请按提示修正对应字段。
+后端逐字段校验。若某个字段为空或格式错误，应用左侧显示「配置文件无效」面板，标出文件路径与具体错误（形如 `hosts[0].name: must not be empty`）；修正后点「重新加载」。
 
 ---
 
