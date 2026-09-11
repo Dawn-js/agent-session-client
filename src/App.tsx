@@ -2,28 +2,50 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "./Terminal";
-import { applyState, type Session, type SessionState } from "./sessions";
+import { applyState, STATE_META, type Session, type SessionState } from "./sessions";
+import {
+  isConfigError,
+  loadConfig,
+  writeExampleConfig,
+  type ConfigError,
+  type ConfigView,
+} from "./config";
 
-interface ConfigView {
-  hosts: { name: string; host: string }[];
-  agents: { id: string; label: string }[];
-}
+const CONFIG_OVERRIDE = import.meta.env.VITE_AGENT_SESSION_CONFIG as string | undefined;
 
 export default function App() {
   const [config, setConfig] = useState<ConfigView | null>(null);
+  const [configError, setConfigError] = useState<ConfigError | null>(null);
+  const [loading, setLoading] = useState(true);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const writerRef = useRef<((d: string) => void) | null>(null);
 
-  useEffect(() => {
-    const cfgPath =
-      (import.meta.env.VITE_AGENT_SESSION_CONFIG as string | undefined) ??
-      "examples/config.example.json";
-    invoke<ConfigView>("load_config", { path: cfgPath })
-      .then(setConfig)
-      .catch((e) => console.error(e));
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const view = await loadConfig(CONFIG_OVERRIDE);
+      setConfig(view);
+      setConfigError(null);
+    } catch (error) {
+      setConfig(null);
+      setConfigError(
+        isConfigError(error)
+          ? error
+          : { kind: "invalid", path: "(未知)", errors: [String(error)] },
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  useEffect(() => {
     const unlisten = listen<{ id: string; state: SessionState }>("session-state", (e) => {
       setSessions((prev) => applyState(prev, e.payload.id, e.payload.state));
     });
@@ -65,57 +87,160 @@ export default function App() {
   }, []);
 
   const start = async (host: string, agent: string) => {
-    const id = await invoke<string>("start_session", { host, agent, project: "" });
-    setSessions((prev) => applyState(prev, id, "connecting"));
-    setActive(id);
+    setActionError(null);
+    try {
+      const id = await invoke<string>("start_session", { host, agent, project: "" });
+      setSessions((prev) => applyState(prev, id, "connecting"));
+      setActive(id);
+    } catch (error) {
+      setActionError(String(error));
+    }
+  };
+
+  const generateConfig = async () => {
+    setActionError(null);
+    try {
+      await writeExampleConfig();
+      await reload();
+    } catch (error) {
+      setActionError(String(error));
+    }
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui" }}>
-      <aside style={{ width: 220, borderRight: "1px solid #ddd", padding: 8 }}>
-        <h3>Sessions</h3>
-        {sessions.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setActive(s.id)}
-            style={{ display: "block", width: "100%", textAlign: "left" }}
-          >
-            {s.id} — {s.state}
-          </button>
-        ))}
-        <h4>New</h4>
-        {config?.hosts.map((h) =>
-          config.agents.map((a) => (
-            <button key={`${h.name}-${a.id}`} onClick={() => start(h.name, a.id)}>
-              {h.name} / {a.label}
-            </button>
-          )),
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-dot" />
+          Agent Sessions
+        </div>
+
+        <section className="panel">
+          <h2 className="panel-title">会话</h2>
+          {sessions.length === 0 ? (
+            <p className="muted">还没有会话</p>
+          ) : (
+            <ul className="session-list">
+              {sessions.map((s) => (
+                <li key={s.id}>
+                  <button
+                    className={`session${s.id === active ? " is-active" : ""}`}
+                    onClick={() => setActive(s.id)}
+                  >
+                    <span className="session-id">{s.id}</span>
+                    <span className={`badge tone-${STATE_META[s.state].tone}`}>
+                      {STATE_META[s.state].label}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="panel panel-grow">
+          <h2 className="panel-title">新建会话</h2>
+          {loading ? (
+            <p className="muted">正在加载配置…</p>
+          ) : configError ? (
+            <ConfigErrorPanel error={configError} onGenerate={generateConfig} onReload={reload} />
+          ) : config ? (
+            <div className="new-grid">
+              {config.hosts.map((h) =>
+                config.agents.map((a) => (
+                  <button
+                    key={`${h.name}-${a.id}`}
+                    className="new-btn"
+                    onClick={() => void start(h.name, a.id)}
+                  >
+                    <strong>{h.name}</strong>
+                    <span>{a.label}</span>
+                  </button>
+                )),
+              )}
+            </div>
+          ) : null}
+        </section>
+
+        {config && (
+          <div className="source" title={config.source_path}>
+            配置：{config.source_path}
+          </div>
         )}
       </aside>
-      <main style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+
+      <main className="main">
         {active ? (
           <>
-            <div
-              style={{
-                height: 96,
-                overflowY: "auto",
-                borderBottom: "1px solid #ddd",
-                padding: 8,
-                fontFamily: "monospace",
-                fontSize: 12,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {notices.map((n, i) => (
-                <div key={i}>{n}</div>
-              ))}
+            <div className="notices">
+              {notices.length === 0 ? (
+                <span className="muted">—</span>
+              ) : (
+                notices.map((n, i) => <div key={i}>{n}</div>)
+              )}
             </div>
             <Terminal onData={onData} onResize={onResize} registerWriter={registerWriter} />
           </>
         ) : (
-          <p style={{ padding: 16 }}>选一个 host / agent 开始会话</p>
+          <div className="welcome">
+            <h1>Agent Sessions</h1>
+            <p>选择左侧的 host / agent 开始一个持久化会话。</p>
+            <p className="muted">断网后重连会自动回到同一会话，并恢复此前的输出。</p>
+            {actionError && <p className="error">{actionError}</p>}
+          </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function ConfigErrorPanel({
+  error,
+  onGenerate,
+  onReload,
+}: {
+  error: ConfigError;
+  onGenerate: () => void;
+  onReload: () => void;
+}) {
+  if (error.kind === "not_found") {
+    return (
+      <div className="config-error">
+        <p className="error-title">未找到配置文件</p>
+        <p className="muted">已查找以下位置：</p>
+        <ul className="path-list">
+          {error.searched.map((p) => (
+            <li key={p}>
+              <code>{p}</code>
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <button className="primary" onClick={onGenerate}>
+            生成示例配置
+          </button>
+          <button onClick={onReload}>重新加载</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="config-error">
+      <p className="error-title">配置文件无效</p>
+      <p>
+        <code>{error.path}</code>
+      </p>
+      <ul className="error-list">
+        {error.errors.map((e) => (
+          <li key={e}>{e}</li>
+        ))}
+      </ul>
+      <div className="row">
+        <button className="primary" onClick={onReload}>
+          重新加载
+        </button>
+      </div>
     </div>
   );
 }

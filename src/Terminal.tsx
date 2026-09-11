@@ -34,5 +34,5 @@ export function Terminal({ onData, onResize, registerWriter }: Props) {
     };
   }, [onData, onResize, registerWriter]);
 
-  return <div ref={hostRef} style={{ flex: 1, minHeight: 0 }} />;
+  return <div ref={hostRef} className="terminal-host" />;
 }

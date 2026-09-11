@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-use session_core::config::{parse_config, validate};
+use session_core::discovery::{
+    example_config_json, load_from_candidates, unique_paths, LoadOutcome,
+};
 use session_core::session::SessionState;
 
 use crate::runner::{run_session, RunnerMsg};
@@ -26,6 +29,17 @@ pub struct AgentView {
 pub struct ConfigView {
     pub hosts: Vec<HostView>,
     pub agents: Vec<AgentView>,
+    pub source_path: String,
+    pub searched: Vec<String>,
+}
+
+/// Structured config-load failure so the UI can react (and guide the user)
+/// instead of being left with a silently empty screen.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConfigError {
+    NotFound { searched: Vec<String> },
+    Invalid { path: String, errors: Vec<String> },
 }
 
 pub struct AppState {
@@ -34,17 +48,97 @@ pub struct AppState {
     pub runners: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
+/// Candidate config locations, highest priority first. The first existing file
+/// wins. The user config directory is where "generate example config" writes,
+/// so a packaged app works without a file next to the executable.
+fn config_candidates(app: &AppHandle, override_path: Option<&str>) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(path) = override_path.map(str::trim).filter(|p| !p.is_empty()) {
+        candidates.push(PathBuf::from(path));
+    }
+
+    let cwd = std::env::current_dir().ok();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    let app_dir = app.path().app_config_dir().ok();
+
+    for dir in [cwd.as_deref(), exe_dir.as_deref(), app_dir.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        candidates.push(dir.join("config.json"));
+    }
+    for dir in [exe_dir.as_deref(), cwd.as_deref()].into_iter().flatten() {
+        candidates.push(dir.join("examples").join("config.example.json"));
+    }
+
+    unique_paths(candidates)
+}
+
+fn display_paths(paths: &[PathBuf]) -> Vec<String> {
+    paths.iter().map(|p| p.display().to_string()).collect()
+}
+
 #[tauri::command]
-pub fn load_config(state: State<AppState>, path: String) -> Result<ConfigView, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
-    let cfg = parse_config(&text)?;
-    validate(&cfg).map_err(|e| e.join("; "))?;
-    let view = ConfigView {
-        hosts: cfg.hosts.iter().map(|h| HostView { name: h.name.clone(), host: h.host.clone() }).collect(),
-        agents: cfg.agents.iter().map(|a| AgentView { id: a.id.clone(), label: a.label.clone() }).collect(),
-    };
-    *state.config.lock().unwrap() = Some(cfg);
-    Ok(view)
+pub fn load_config(
+    app: AppHandle,
+    state: State<AppState>,
+    path: Option<String>,
+) -> Result<ConfigView, ConfigError> {
+    let candidates = config_candidates(&app, path.as_deref());
+
+    match load_from_candidates(&candidates) {
+        LoadOutcome::Loaded { path, config } => {
+            let view = ConfigView {
+                hosts: config
+                    .hosts
+                    .iter()
+                    .map(|h| HostView {
+                        name: h.name.clone(),
+                        host: h.host.clone(),
+                    })
+                    .collect(),
+                agents: config
+                    .agents
+                    .iter()
+                    .map(|a| AgentView {
+                        id: a.id.clone(),
+                        label: a.label.clone(),
+                    })
+                    .collect(),
+                source_path: path.display().to_string(),
+                searched: display_paths(&candidates),
+            };
+            *state.config.lock().unwrap() = Some(config);
+            Ok(view)
+        }
+        LoadOutcome::NotFound { .. } => Err(ConfigError::NotFound {
+            searched: display_paths(&candidates),
+        }),
+        LoadOutcome::Invalid { path, errors } => Err(ConfigError::Invalid {
+            path: path.display().to_string(),
+            errors,
+        }),
+    }
+}
+
+/// Write the first-run template into the user config directory (no-op if a
+/// config already exists there). Returns the path so the UI can show it.
+#[tauri::command]
+pub fn write_example_config(app: AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("无法解析用户配置目录: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败 {}: {e}", dir.display()))?;
+    let path = dir.join("config.json");
+    if !path.exists() {
+        std::fs::write(&path, example_config_json())
+            .map_err(|e| format!("写入失败 {}: {e}", path.display()))?;
+    }
+    Ok(path.display().to_string())
 }
 
 #[tauri::command]

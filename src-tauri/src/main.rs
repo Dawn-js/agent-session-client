@@ -19,6 +19,7 @@ fn main() {
             commands::write_session,
             commands::resize_session,
             commands::close_session,
+            commands::write_example_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
