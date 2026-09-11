@@ -1,5 +1,6 @@
 pub mod backoff;
 pub mod command;
+pub mod config;
 pub mod exit;
 pub mod reconnect;
 
