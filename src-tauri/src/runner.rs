@@ -13,7 +13,7 @@ use session_core::session::{transition, SessionEvent, SessionState};
 use session_core::transport::PtySession;
 
 pub enum RunnerMsg {
-    Output(Vec<u8>),
+    Output(String),
     State(SessionState),
     Notice(String),
 }
@@ -46,15 +46,22 @@ pub fn run_session(
     kill_remote_on_close: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut backoff = Backoff::default();
+    // I3: 首次探测必然 Ok(false)（会话尚不存在），不应发"原会话已不在"提示
+    let mut first_attempt = true;
 
     loop {
+        let is_first_probe = first_attempt;
+        first_attempt = false;
+
         // 先判断会话是否还在，用于提示"原会话已不在，已新建"
         match probe_session(&target, &session) {
             Ok(true) => {}
             Ok(false) => {
-                let _ = tx.send(RunnerMsg::Notice(
-                    "原会话已不在，已新建".to_string(),
-                ));
+                if !is_first_probe {
+                    let _ = tx.send(RunnerMsg::Notice(
+                        "原会话已不在，已新建".to_string(),
+                    ));
+                }
             }
             Err(kind) => {
                 // decide() 已经给出退避时长，不要再调 next_delay()（R7）
@@ -65,6 +72,13 @@ pub fn run_session(
                         continue;
                     }
                     RetryDecision::GiveUp => {
+                        // I2: 放弃前给出人话原因，供前端 notice 渲染
+                        let reason = match kind {
+                            SshOutcome::TmuxMissing => "服务端缺 tmux，请先安装：sudo dnf install tmux（或 sudo apt install tmux）".to_string(),
+                            SshOutcome::Auth => "SSH 认证失败：请检查密钥/用户名".to_string(),
+                            _ => "连接失败".to_string(),
+                        };
+                        let _ = tx.send(RunnerMsg::Notice(reason));
                         let _ = tx.send(RunnerMsg::State(transition(
                             SessionState::Connecting,
                             SessionEvent::GiveUp,
@@ -101,16 +115,24 @@ pub fn run_session(
         let out_tx = tx.clone();
         let reader_handle = thread::spawn(move || {
             let mut buf = vec![0u8; 8192];
+            // 保留不完整的 UTF-8 尾序列，等下一个读取块拼齐（I4）
+            let mut pending: Vec<u8> = Vec::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if out_tx.send(RunnerMsg::Output(buf[..n].to_vec())).is_err() {
+                        let text =
+                            session_core::transport::complete_utf8_prefix(&mut pending, &buf[..n]);
+                        if out_tx.send(RunnerMsg::Output(text)).is_err() {
                             break;
                         }
                     }
                     Err(_) => break,
                 }
+            }
+            // 读完仍剩下的不完整序列：lossy 兜底，不静默丢弃
+            if !pending.is_empty() {
+                let _ = out_tx.send(RunnerMsg::Output(String::from_utf8_lossy(&pending).to_string()));
             }
         });
 

@@ -62,11 +62,19 @@ pub fn start_session(
     let session_name = if project.trim().is_empty() { host.clone() } else { format!("{agent}-{project}") };
     let id = session_name.clone();
 
+    // C1: 拒绝重复会话——否则旧 runner 的输入通道被覆盖断开，其默认 kill
+    // 会杀掉同一 tmux 会话，连带杀死新会话
+    if state.runners.lock().unwrap().contains_key(&id) {
+        return Err(format!("session already running: {id}"));
+    }
+
     let (in_tx, in_rx) = std::sync::mpsc::channel::<Vec<u8>>();
     let (msg_tx, msg_rx) = std::sync::mpsc::channel::<RunnerMsg>();
     state.inputs.lock().unwrap().insert(id.clone(), in_tx);
 
-    let kill_flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    // I1: 关闭标签只断开本地 ssh（§7.5）；远端 tmux 会话仅在用户显式
+    // close_session(kill_remote=true) 时才被终止
+    let kill_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     state.runners.lock().unwrap().insert(id.clone(), kill_flag.clone());
 
     let app_for_thread = app.clone();
@@ -82,8 +90,7 @@ pub fn start_session(
     std::thread::spawn(move || {
         for msg in msg_rx {
             match msg {
-                RunnerMsg::Output(bytes) => {
-                    let data = String::from_utf8_lossy(&bytes).to_string();
+                RunnerMsg::Output(data) => {
                     let _ = app_for_thread.emit("session-output", serde_json::json!({ "id": id_for_thread, "data": data }));
                 }
                 RunnerMsg::State(s) => {

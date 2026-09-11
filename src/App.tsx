@@ -12,6 +12,7 @@ interface ConfigView {
 export default function App() {
   const [config, setConfig] = useState<ConfigView | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [notices, setNotices] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const writerRef = useRef<((d: string) => void) | null>(null);
 
@@ -26,8 +27,12 @@ export default function App() {
     const unlisten = listen<{ id: string; state: SessionState }>("session-state", (e) => {
       setSessions((prev) => applyState(prev, e.payload.id, e.payload.state));
     });
+    const unlistenNotice = listen<{ id: string; message: string }>("session-notice", (e) => {
+      setNotices((prev) => [...prev, `${e.payload.id}: ${e.payload.message}`]);
+    });
     return () => {
       unlisten.then((f) => f());
+      unlistenNotice.then((f) => f());
     };
   }, []);
 
@@ -89,7 +94,24 @@ export default function App() {
       </aside>
       <main style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         {active ? (
-          <Terminal onData={onData} onResize={onResize} registerWriter={registerWriter} />
+          <>
+            <div
+              style={{
+                height: 96,
+                overflowY: "auto",
+                borderBottom: "1px solid #ddd",
+                padding: 8,
+                fontFamily: "monospace",
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {notices.map((n, i) => (
+                <div key={i}>{n}</div>
+              ))}
+            </div>
+            <Terminal onData={onData} onResize={onResize} registerWriter={registerWriter} />
+          </>
         ) : (
           <p style={{ padding: 16 }}>选一个 host / agent 开始会话</p>
         )}
