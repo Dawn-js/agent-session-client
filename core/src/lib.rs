@@ -1,5 +1,7 @@
+pub mod backoff;
 pub mod command;
 pub mod exit;
+pub mod reconnect;
 
 pub const PROJECT_NAME: &str = "agent-session-client";
 
