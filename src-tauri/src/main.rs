@@ -4,14 +4,14 @@ mod commands;
 mod runner;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 fn main() {
     tauri::Builder::default()
         .manage(commands::AppState {
             config: Mutex::new(None),
-            inputs: Mutex::new(HashMap::new()),
-            runners: Mutex::new(HashMap::new()),
+            inputs: Arc::new(Mutex::new(HashMap::new())),
+            runners: Arc::new(Mutex::new(HashMap::new())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::load_config,

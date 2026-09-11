@@ -163,6 +163,8 @@ pub fn run_session(
                 let _ = StdCommand::new("ssh").args(&argv).status();
             }
             let _ = tx.send(RunnerMsg::State(SessionState::Closed));
+            // R11.2/R11.3: 用户关闭路径也必须 wait 收割子进程，否则留下僵尸
+            let _ = pty.wait();
             return;
         }
 

@@ -30,8 +30,8 @@ pub struct ConfigView {
 
 pub struct AppState {
     pub config: Mutex<Option<session_core::config::Config>>,
-    pub inputs: Mutex<HashMap<String, Sender<Vec<u8>>>>,
-    pub runners: Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    pub inputs: Arc<Mutex<HashMap<String, Sender<Vec<u8>>>>>,
+    pub runners: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 #[tauri::command]
@@ -75,7 +75,10 @@ pub fn start_session(
         run_session(msg_tx, target, session_name, agent_cfg.cmd.clone(), 80, 24, in_rx, kill_flag);
     });
 
-    // 消息泵：把 RunnerMsg 转成前端事件
+    // 消息泵：把 RunnerMsg 转成前端事件；runner 结束（msg_rx 关闭）后清理会话表
+    let inputs_for_thread = state.inputs.clone();
+    let runners_for_thread = state.runners.clone();
+    let id_for_cleanup = id_for_thread.clone();
     std::thread::spawn(move || {
         for msg in msg_rx {
             match msg {
@@ -91,6 +94,8 @@ pub fn start_session(
                 }
             }
         }
+        inputs_for_thread.lock().unwrap().remove(&id_for_cleanup);
+        runners_for_thread.lock().unwrap().remove(&id_for_cleanup);
     });
 
     Ok(id)
