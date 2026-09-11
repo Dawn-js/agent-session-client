@@ -16,7 +16,10 @@ export default function App() {
   const writerRef = useRef<((d: string) => void) | null>(null);
 
   useEffect(() => {
-    invoke<ConfigView>("load_config", { path: "examples/config.example.json" })
+    const cfgPath =
+      (import.meta.env.VITE_AGENT_SESSION_CONFIG as string | undefined) ??
+      "examples/config.example.json";
+    invoke<ConfigView>("load_config", { path: cfgPath })
       .then(setConfig)
       .catch((e) => console.error(e));
 
