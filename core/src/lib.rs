@@ -1,4 +1,5 @@
 pub mod command;
+pub mod exit;
 
 pub const PROJECT_NAME: &str = "agent-session-client";
 
