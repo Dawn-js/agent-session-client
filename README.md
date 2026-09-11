@@ -111,19 +111,23 @@ npx tauri build        # 打包发布版
   ],
   "agents": [
     { "id": "hermes", "label": "Hermes Agent", "cmd": "hermes chat" },
-    { "id": "harness", "label": "DeepSeek Harness", "cmd": "deepseek-harness" }
+    { "id": "dsh", "label": "DeepSeek Harness", "cmd": "dsh" },
   ]
 }
 ```
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `hosts[].name` | ✅ | 界面里显示的 host 名，也是默认 tmux 会话名 |
+| `hosts[].name` | ✅ | 界面里显示的 host 名 |
 | `hosts[].host` | ✅ | 主机名或 IP |
 | `hosts[].user` | | SSH 用户名；省略则用 `~/.ssh/config` 里的默认值 |
 | `hosts[].extra_ssh_args` | | 追加的 ssh 参数，如 `["-p", "2222"]` |
 | `agents[].id` / `label` | ✅ | agent 标识与显示名 |
 | `agents[].cmd` | ✅ | 远端启动命令，例如 `hermes chat` |
+
+远端 tmux 会话名按 **agent** 生成（`<agent>`；指定 `project` 时为 `<agent>-<project>`），
+因此同一 host 上的不同 agent 各自使用独立会话，互不干扰。界面里每个 host×agent 组合
+都会渲染成一个按钮，点哪个就用哪个。
 
 参考模板见 [`examples/config.example.json`](examples/config.example.json)。
 
