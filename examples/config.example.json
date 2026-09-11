@@ -1,0 +1,9 @@
+{
+  "hosts": [
+    { "name": "main", "host": "REPLACE_WITH_HOST", "user": "REPLACE_WITH_USER" }
+  ],
+  "agents": [
+    { "id": "hermes", "label": "Hermes Agent", "cmd": "REPLACE_WITH_HERMES_CMD" },
+    { "id": "harness", "label": "DeepSeek Harness", "cmd": "REPLACE_WITH_HARNESS_CMD" }
+  ]
+}

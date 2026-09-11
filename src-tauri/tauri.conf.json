@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "agent-session-client",
+  "version": "0.1.0",
+  "identifier": "dev.local.agent-session-client",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [{ "title": "Agent Sessions", "width": 1100, "height": 720 }],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": true, "targets": "all" }
+}
