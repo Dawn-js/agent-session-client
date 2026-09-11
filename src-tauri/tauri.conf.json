@@ -13,5 +13,5 @@
     "windows": [{ "title": "Agent Sessions", "width": 1100, "height": 720 }],
     "security": { "csp": null }
   },
-  "bundle": { "active": true, "targets": "all" }
+  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.ico"] }
 }
