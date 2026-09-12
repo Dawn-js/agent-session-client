@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use session_core::config::{parse_config, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
 };
@@ -17,12 +18,15 @@ use crate::runner::{run_session, RunnerMsg};
 pub struct HostView {
     pub name: String,
     pub host: String,
+    pub user: Option<String>,
+    pub extra_ssh_args: Vec<String>,
 }
 
 #[derive(Serialize)]
 pub struct AgentView {
     pub id: String,
     pub label: String,
+    pub cmd: String,
 }
 
 #[derive(Serialize)]
@@ -98,6 +102,8 @@ pub fn load_config(
                     .map(|h| HostView {
                         name: h.name.clone(),
                         host: h.host.clone(),
+                        user: h.user.clone(),
+                        extra_ssh_args: h.extra_ssh_args.clone(),
                     })
                     .collect(),
                 agents: config
@@ -106,6 +112,7 @@ pub fn load_config(
                     .map(|a| AgentView {
                         id: a.id.clone(),
                         label: a.label.clone(),
+                        cmd: a.cmd.clone(),
                     })
                     .collect(),
                 source_path: path.display().to_string(),
@@ -128,16 +135,54 @@ pub fn load_config(
 /// config already exists there). Returns the path so the UI can show it.
 #[tauri::command]
 pub fn write_example_config(app: AppHandle) -> Result<String, String> {
+    let path = user_config_path(&app)?;
+    if !path.exists() {
+        std::fs::write(&path, example_config_json())
+            .map_err(|e| format!("写入失败 {}: {e}", path.display()))?;
+    }
+    Ok(path.display().to_string())
+}
+
+fn user_config_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
         .map_err(|e| format!("无法解析用户配置目录: {e}"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败 {}: {e}", dir.display()))?;
-    let path = dir.join("config.json");
-    if !path.exists() {
-        std::fs::write(&path, example_config_json())
-            .map_err(|e| format!("写入失败 {}: {e}", path.display()))?;
-    }
+    Ok(dir.join("config.json"))
+}
+
+/// Validate and save a config JSON from the in-app editor. Always writes to the
+/// user config directory (the same place "generate example config" writes), so
+/// a config picked up from the exe directory or cwd gets imported there on
+/// first save. On success the parsed config replaces the in-memory state and
+/// the written path is returned; on failure the field-level errors come back
+/// as the existing `ConfigError::Invalid` payload.
+#[tauri::command]
+pub fn save_config(
+    app: AppHandle,
+    state: State<AppState>,
+    json: String,
+) -> Result<String, ConfigError> {
+    let cfg = parse_config(&json).map_err(|e| ConfigError::Invalid {
+        path: "(编辑内容)".to_string(),
+        errors: vec![e],
+    })?;
+    let path = user_config_path(&app).map_err(|e| ConfigError::Invalid {
+        path: "(用户配置目录)".to_string(),
+        errors: vec![e],
+    })?;
+    validate(&cfg).map_err(|errors| ConfigError::Invalid {
+        path: path.display().to_string(),
+        errors,
+    })?;
+    let fail = |e: String| ConfigError::Invalid {
+        path: path.display().to_string(),
+        errors: vec![e],
+    };
+    let text = serde_json::to_string_pretty(&cfg).map_err(|e| fail(e.to_string()))?;
+    std::fs::write(&path, text + "\n").map_err(|e| fail(format!("写入失败: {e}")))?;
+    *state.config.lock().unwrap() = Some(cfg);
     Ok(path.display().to_string())
 }
 
