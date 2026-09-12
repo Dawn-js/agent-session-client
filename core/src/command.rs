@@ -37,7 +37,8 @@ pub fn destination(target: &SshTarget) -> String {
 /// 不想要就在远端执行 `tmux set -g mouse off`。
 pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
     format!(
-        "tmux set -g mouse on; tmux new -As {} {}",
+        "tmux set -g mouse on; tmux set -t {} mouse on 2>/dev/null; tmux new -As {} {}",
+        shell_quote(session),
         shell_quote(session),
         shell_quote(agent_cmd)
     )
@@ -104,7 +105,7 @@ mod tests {
     fn builds_remote_tmux_cmd() {
         assert_eq!(
             build_remote_tmux_cmd("hermes-proj", "hermes chat"),
-            "tmux set -g mouse on; tmux new -As 'hermes-proj' 'hermes chat'"
+            "tmux set -g mouse on; tmux set -t 'hermes-proj' mouse on 2>/dev/null; tmux new -As 'hermes-proj' 'hermes chat'"
         );
     }
 
@@ -114,7 +115,7 @@ mod tests {
             "ssh",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-t", "ubuntu@example.com",
-            "tmux set -g mouse on; tmux new -As 'hermes-proj' 'hermes chat'",
+            "tmux set -g mouse on; tmux set -t 'hermes-proj' mouse on 2>/dev/null; tmux new -As 'hermes-proj' 'hermes chat'",
         ]);
     }
 
