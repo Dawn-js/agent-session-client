@@ -2,6 +2,50 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（关闭会话 + 探测已装 agent）
+
+**本次做了什么**
+
+- **修「连接错误时会话关不掉」**。用户报的现象背后其实是三个叠着的 bug：
+  1. 前端根本没有关闭入口 —— `close_session` 命令一直在，但从未被调用。
+  2. **根因**：runner 只在 PTY 输入循环里读输入通道，而网络类失败会无限重连
+     （`is_retryable` 只认 Network），退避期间是 `thread::sleep`，`__close` 永远积压。
+     于是连接错误的会话既关不掉、又一直在后台重连。
+     修法：core 新增 `reconnect::wait_for_close`（≤100ms 切片轮询，能被 `__close` 打断，
+     且不会丢掉退避期间到达的 `__resize`）与 `drain_pending`（用在阻塞的 `probe_session`
+     返回之后）；runner 的两处退避 sleep 与探测后各接上关闭路径，关闭收尾抽成 `finish_close`。
+  3. 前端 `applyState` 对未知 id 是追加，本地删掉的行会被后续 `exited`/`retrying` 事件复活。
+     修法：App 里用 `useRef<Set>` 立「已关闭」墓碑，墓碑 id 的 state/output/notice 一律丢弃；
+     `start()` 重新开始同一 id 时撤掉墓碑。会话行拆成 `li > .session-main + .session-close`（button 不能嵌套）。
+- `build_probe_argv` 补 `ConnectTimeout=10` / `BatchMode=yes`：主机不可达时探测要阻塞约 2 分钟，
+  而关闭信号要等探测返回才看得见。`Command::output()` 的 stdin 是 null，需要口令的认证本来就过不去，
+  所以 BatchMode 不改变结果。
+- **新增「探测服务器已装 agent」**：`core/src/agents.rs` 放已知 agent 注册表
+  （hermes / dsh，加一行即可扩充）+ `command -v` 探测命令；`probe_agents` 命令走文件面板那条长驻 ssh；
+  设置面板里选 host → 探测 → 「加入 / 全部加入」写进可编辑列表，点保存才落盘（不自动改配置）。
+  探测刻意不改 PATH：用的就是会话启动时同一个非登录 shell 环境，能探到 = 真能启动。
+
+**当前状态**
+
+- `cargo test -p session_core`：77 passed + transport shim 4 passed。
+- `cargo check -p agent-session-client`：通过，0 warning。
+- `npm test`：24 passed（新增 removeSession / mergeDiscoveredAgents）。
+- `npm run build`：通过（tsc 严格 + vite）。
+- **未经 Windows 目视确认**：关闭中/重连中/连接失败后关闭、探测结果加入后保存的界面效果。
+
+**下一步计划**
+
+- 在 Windows 上 `npx tauri dev` 实测：点开一个连不上的 host，确认徽标在「重连中」，点 ✕ 能立刻消失且不再复活；
+  再在设置面板里对 main 探测，确认能列出 hermes/dsh 并加入保存。
+- 关闭按钮目前只断开本地连接、保留远端 tmux（与设计 §7.5 一致）；「同时结束远端会话」暂无 UI。
+
+**踩过的坑**
+
+- **退避 sleep 是控制帧的盲区**：任何「等待期间也要能收到用户意图」的循环，都不能用裸 `thread::sleep`。
+  已沉淀为 AGENTS.md 踩坑 ledger 第 15 条。
+- **`for ... done` 的退出码取最后一次执行**：探测命令里最后一个 bin 没装就是 1，
+  而长驻通道把非零退出码当失败，所以命令结尾必须补 `; true`。
+
 ## 2026-09-12（滚轮二次修复）
 
 **本次做了什么**

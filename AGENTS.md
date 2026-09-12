@@ -149,7 +149,6 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     **不要再去尝试给 `build_exec_argv` 加 ControlMaster 那三个 `-o`**。
 
 14. **本机网络是好的，卡住的是沙箱里的 libcurl**（2026-09-12 复核；此前归错过因，以这版为准）：
-
     - TUN 模式常开（网卡 `198.18.0.2`），直连 `static.crates.io` / `registry.npmjs.org` 都是 200。
       客户端换过，**代理端口现在是 `7897`**，旧的 `7890` 已不监听。
       `git config --global` 里的 `http.proxy` 仍指向 `7890`，是遗留的失效配置。
@@ -163,6 +162,13 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
       **`main` 上的 cargo 不在 PATH 里**，在 `~/.cargo/bin`；`cargo check` 在它上面能过，
       不需要 webkit2gtk——那是 `tauri build` 才要）。
 
+15. **退避/等待期间不能裸用 `thread::sleep`**：runner 只在 PTY 输入循环里读输入通道，
+    而网络类失败会**无限重连**（`is_retryable` 只认 `Network`）。sleep 期间 `__close` 一直积压，
+    表现为「连接错误时会话永远关不掉」。等待必须能被控制帧打断：用
+    `reconnect::wait_for_close`（≤100ms 切片轮询），并且**要接住等待期间到达的 `__resize`**，
+    否则重连出来的 PTY 会一直用旧尺寸（前端只在尺寸真正变化时才发 resize，不会补发）。
+    阻塞的 `probe_session`（最长 `ConnectTimeout=10s`）返回后也要 `drain_pending` 一次。
+
 ## 约定
 
 - Conventional Commits（`feat:` / `fix:` / `chore:` / `docs:` / `ci:`），英文小写。
@@ -175,6 +181,9 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
 - 2026-09-12 新增：应用内配置编辑 + 设置面板（`5836d6c`）、服务器文件面板、拖拽插入远端路径、
   右键粘贴、终端字体与 ANSI 配色、应用图标、文件面板的「技能」页签（列 agent 已装 skill）。
   **界面效果未经 Windows 目视确认**，需要 `npx tauri dev` 看过才算完。
+- 2026-09-12 新增：会话行关闭按钮（关闭 = 只断本地 ssh，远端 tmux 保留）+ 修复「连接错误时
+  会话关不掉」（根因见 ledger 15）；设置面板新增「探测服务器已装 agent」
+  （已知 agent 注册表在 `core/src/agents.rs`，加一行即可扩充）。同样**未经 Windows 目视确认**。
 - CI：push 到 `master` 或手动 dispatch 触发 Windows 构建，产物发 GitHub Releases（当前 `v0.2.0`）。
 - `examples/config.example.json` 里 `REPLACE_WITH_*` 占位符由用户填真实值（host、agent 启动命令）。
 - 遗留：

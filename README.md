@@ -65,7 +65,8 @@ Agent Sessions 把"会话"从易碎的 SSH 连接里解耦出来：
 
 `connecting` → `connected` → （断线）`retrying` → `connected` … → `closed`
 
-- `exited` 是终态：agent 退出或不可重试的失败。用户可显式"结束会话"进入 `closed`，此时可选同时销毁远端 tmux 会话。
+- `exited` 是终态：agent 退出或不可重试的失败。会话行上的 **✕** 会关掉它（进入 `closed`）：
+  只断开本地 ssh，**远端 tmux 会话保留**，之后点同一个 agent 即可接回。
 
 ---
 
@@ -132,6 +133,10 @@ npx tauri build        # 打包发布版
 参考模板见 [`examples/config.example.json`](examples/config.example.json)。
 
 > 也可以在应用内点侧栏底部的「**⚙ 编辑配置**」直接增删改 host / agent，保存时会校验并写入用户配置目录，无需手动编辑 JSON。
+>
+> 设置面板里还能**探测服务器上装了哪些 agent**：选一台已保存的 host，点「🔍 探测已装 agent」，
+> 命中的会列出来；点「加入 / 全部加入」写进 Agent 列表，再点保存才生效（不会自动改配置）。
+> 探测只做一次 `command -v`，用的就是会话启动时那个非登录 shell 环境 —— 能探到 = 真能启动。
 
 > ⚠️ **真实配置值（服务器地址、用户名、agent 命令）永远不要提交到仓库。** 仓库中的示例始终保持 `REPLACE_WITH_*` 占位符。
 
