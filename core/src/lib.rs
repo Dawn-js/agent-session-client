@@ -8,6 +8,7 @@ pub mod files;
 pub mod keys;
 pub mod reconnect;
 pub mod session;
+pub mod ssh_config;
 pub mod transport;
 
 pub const PROJECT_NAME: &str = "agent-session-client";
