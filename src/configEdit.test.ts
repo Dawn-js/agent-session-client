@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentView, ConfigView } from "./config";
 import {
+  bootstrapConfigJson,
   buildConfigJson,
   mergeDiscoveredAgents,
   toEditableAgents,
@@ -92,5 +93,29 @@ describe("buildConfigJson", () => {
     expect(parsed.hosts[0].name).toBe("");
     expect(parsed.hosts[0].host).toBe("x");
     expect(parsed.agents).toEqual([]);
+  });
+});
+
+describe("bootstrapConfigJson", () => {
+  const agents: AgentView[] = [
+    { id: "hermes", label: "Hermes Agent", cmd: "hermes chat" },
+    { id: "dsh", label: "DeepSeek Harness", cmd: "dsh" },
+  ];
+
+  it("uses the alias as both name and host, leaving ssh to resolve the rest", () => {
+    const parsed = JSON.parse(bootstrapConfigJson("main", agents));
+    expect(parsed.hosts).toEqual([{ name: "main", host: "main" }]);
+  });
+
+  it("trims the alias", () => {
+    const parsed = JSON.parse(bootstrapConfigJson("  main  ", agents));
+    expect(parsed.hosts[0]).toEqual({ name: "main", host: "main" });
+  });
+
+  it("carries the registry agents verbatim so both lists are non-empty", () => {
+    const parsed = JSON.parse(bootstrapConfigJson("main", agents));
+    expect(parsed.agents).toEqual(agents);
+    expect(parsed.hosts).toHaveLength(1);
+    expect(parsed.agents.length).toBeGreaterThan(0);
   });
 });

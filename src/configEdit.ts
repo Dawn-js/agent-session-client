@@ -76,3 +76,12 @@ export function buildConfigJson(hosts: EditableHost[], agents: EditableAgent[]):
     2,
   );
 }
+
+/**
+ * 首次启动时，用一个本机 ssh 别名生成最小可用配置：host 直接取别名本身、
+ * `user` 留空 —— 连接时 ssh 会自己去 `~/.ssh/config` 解释 HostName/User/Port。
+ * agent 取后端注册表全集，这样 hosts/agents 都非空、必然过后端校验。
+ */
+export function bootstrapConfigJson(alias: string, agents: AgentView[]): string {
+  return buildConfigJson([{ name: alias, host: alias, user: "", extra: "" }], agents);
+}

@@ -8,11 +8,16 @@ import { SettingsModal } from "./SettingsModal";
 import { applyState, removeSession, STATE_META, type Session, type SessionState } from "./sessions";
 import {
   isConfigError,
+  knownAgents,
+  listSshHosts,
   loadConfig,
+  saveConfig,
   writeExampleConfig,
   type ConfigError,
   type ConfigView,
+  type SshHostView,
 } from "./config";
+import { bootstrapConfigJson } from "./configEdit";
 
 const CONFIG_OVERRIDE = import.meta.env.VITE_AGENT_SESSION_CONFIG as string | undefined;
 
@@ -25,6 +30,8 @@ function initialTheme(): ThemeName {
 export default function App() {
   const [config, setConfig] = useState<ConfigView | null>(null);
   const [configError, setConfigError] = useState<ConfigError | null>(null);
+  // 本机 ~/.ssh/config 里已有的 Host 别名。首次启动没配置时用它代替"填地址"。
+  const [sshHosts, setSshHosts] = useState<SshHostView[]>([]);
   const [loading, setLoading] = useState(true);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
@@ -49,13 +56,24 @@ export default function App() {
       const view = await loadConfig(CONFIG_OVERRIDE);
       setConfig(view);
       setConfigError(null);
+      setSshHosts([]);
     } catch (error) {
       setConfig(null);
-      setConfigError(
-        isConfigError(error)
-          ? error
-          : { kind: "invalid", path: "(未知)", errors: [String(error)] },
-      );
+      const failure: ConfigError = isConfigError(error)
+        ? error
+        : { kind: "invalid", path: "(未知)", errors: [String(error)] };
+      setConfigError(failure);
+      // 没配置时顺带列出本机 ssh config 里已有的服务器。读不到就当没有 ——
+      // 这只是个便利入口，绝不能因此挡住启动。
+      if (failure.kind === "not_found") {
+        try {
+          setSshHosts(await listSshHosts());
+        } catch {
+          setSshHosts([]);
+        }
+      } else {
+        setSshHosts([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -155,6 +173,24 @@ export default function App() {
     try {
       await writeExampleConfig();
       await reload();
+      // 生成的模板里全是 REPLACE_WITH_* 占位符，必须逼用户立刻换成真值，
+      // 否则又会变成一个"看着能用、点了必挂"的主机。
+      setSettingsOpen(true);
+    } catch (error) {
+      setActionError(String(error));
+    }
+  };
+
+  /**
+   * 用本机 ssh 别名生成初始配置：host 直接写别名，连接时由系统 ssh 去读
+   * `~/.ssh/config`，所以不需要在这里填地址。agent 取后端注册表全集。
+   */
+  const useAlias = async (alias: string) => {
+    setActionError(null);
+    try {
+      const agents = await knownAgents();
+      await saveConfig(bootstrapConfigJson(alias, agents));
+      await reload();
     } catch (error) {
       setActionError(String(error));
     }
@@ -222,7 +258,13 @@ export default function App() {
           {loading ? (
             <p className="muted">正在加载配置…</p>
           ) : configError ? (
-            <ConfigErrorPanel error={configError} onGenerate={generateConfig} onReload={reload} />
+            <ConfigErrorPanel
+              error={configError}
+              sshHosts={sshHosts}
+              onUseAlias={useAlias}
+              onGenerate={generateConfig}
+              onReload={reload}
+            />
           ) : config ? (
             <>
               <div className="new-grid">
@@ -318,19 +360,58 @@ export default function App() {
   );
 }
 
+/** 主机的可读描述，用作按钮 tooltip（别名本身才是连的东西）。 */
+function describeSshHost(h: SshHostView): string {
+  let target = h.host_name ?? h.alias;
+  if (h.user) target = `${h.user}@${target}`;
+  if (h.port) target = `${target}:${h.port}`;
+  return h.proxy_jump ? `${target}（经 ${h.proxy_jump}）` : target;
+}
+
 function ConfigErrorPanel({
   error,
+  sshHosts,
+  onUseAlias,
   onGenerate,
   onReload,
 }: {
   error: ConfigError;
+  sshHosts: SshHostView[];
+  onUseAlias: (alias: string) => void;
   onGenerate: () => void;
   onReload: () => void;
 }) {
   if (error.kind === "not_found") {
+    // 本机 ssh config 里已经有服务器可用时，直接列出来一键起会话 —— 比让用户
+    // 面对一屏 REPLACE_WITH_* 占位符强得多。
+    const canImport = sshHosts.length > 0;
     return (
       <div className="config-error">
-        <p className="error-title">未找到配置文件</p>
+        <p className="error-title">
+          {canImport ? "选择一台服务器开始" : "未找到配置文件"}
+        </p>
+        {canImport && (
+          <>
+            <p className="muted">
+              检测到本机 <code>~/.ssh/config</code> 里的主机，点一个直接用它：
+            </p>
+            <div className="row">
+              {sshHosts.map((h) => (
+                <button
+                  key={h.alias}
+                  className="primary"
+                  title={describeSshHost(h)}
+                  onClick={() => void onUseAlias(h.alias)}
+                >
+                  用 {h.alias} 开始
+                </button>
+              ))}
+            </div>
+            <p className="muted">
+              没有你要的？也可以生成一份模板自己填（生成后会自动打开编辑面板）。
+            </p>
+          </>
+        )}
         <p className="muted">已查找以下位置：</p>
         <ul className="path-list">
           {error.searched.map((p) => (
@@ -340,7 +421,7 @@ function ConfigErrorPanel({
           ))}
         </ul>
         <div className="row">
-          <button className="primary" onClick={onGenerate}>
+          <button className={canImport ? "" : "primary"} onClick={onGenerate}>
             生成示例配置
           </button>
           <button onClick={onReload}>重新加载</button>
