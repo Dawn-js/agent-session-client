@@ -1,6 +1,6 @@
 # Agent Sessions Client
 
-![build](https://github.com/Dawn-js/agent-session-client/actions/workflows/build.yml/badge.svg)
+![build](https://github.com/owlshift/agent-session-client/actions/workflows/build.yml/badge.svg)
 
 一个 Windows 桌面客户端，用来**在断网/关机后重新接回远端仍在运行的交互式 CLI agent**，并保留断线前的终端画面。
 
