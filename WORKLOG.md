@@ -2,6 +2,30 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（Windows 本机同步链路打通）
+
+**本次做了什么**
+
+- 打通 Windows 开发机的 git ↔ GitHub 同步链路（跨机器协作基础设施，非代码改动）：
+  - 排查出本机 git 直连 GitHub HTTPS 报 `Empty reply from server`，而本机 `127.0.0.1:7890` 有代理在跑；为 git 配置 `http.proxy` / `https.proxy` 后恢复
+  - 配置全局身份 `Dawn-js <55617812+Dawn-js@users.noreply.github.com>`
+  - `credential.helper=manager`，首次 push 完成浏览器授权，凭据已持久化
+  - 仓库 clone 至 `C:\Users\sunbo\workbuddy-ai\ssh开发\agent-session-client`
+
+**当前状态**
+
+- Windows 本机可直接 `git pull` / `git push`，无需重复授权。
+
+**下一步计划**
+
+- 建议把仓库默认分支从 `feat/core` 改为 `master`（见下方「踩过的坑」）。
+- `~/.ssh/id_ed25519_dawn` 尚未注册到 GitHub 账号；如需 SSH 免交互推送再补。
+
+**踩过的坑**
+
+- **默认分支是 `feat/core`，但它落后 `master` 7 个 merge commit**：新机器 clone 时会报 `remote HEAD refers to nonexistent ref` 且不检出任何文件，必须手动 `git checkout master`。建议在 GitHub 仓库设置里把默认分支改为 `master`。
+- 排查网络问题时注意：`curl` 会走 Windows 系统代理而 `git` 不会，两者结果不一致容易误判为「GitHub 挂了」。
+
 ## 2026-09-12
 
 **本次做了什么**
