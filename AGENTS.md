@@ -39,20 +39,24 @@ A 机器上有 GitHub SSH key（`~/.ssh/id_ed25519_github`），认证已通，r
 `git@github.com:owlshift/agent-session-client.git`。
 
 ```bash
-# 1. 本机：提交后打包增量（不用 tar —— tar 不走 git，会把 Windows 的 CRLF
-#    写进 A 的工作区，造成几十个文件假"已修改"）
-git bundle create /tmp/asc.bundle origin/master..master
-scp /tmp/asc.bundle main:/tmp/
+# 1. 本机：提交后打包增量
+#    注意 bundle 路径用仓库外的相对路径 —— git 是原生 Windows 程序，
+#    它不认 MSYS 的 /tmp，会当成不存在的 C:\tmp 而报 "No such file or directory"。
+#    另外不要用 tar 同步源码：tar 不走 git，会把 Windows 的 CRLF 写进 A 的工作区，
+#    造成几十个文件假"已修改"。
+cd <repo> && git bundle create ../asc.bundle origin/master..master
+scp ../asc.bundle main:/tmp/
 
-# 2. A 机器：取回、验证、推送
-ssh main 'cd ~/agent-session-client && git fetch /tmp/asc.bundle master:master \
-  && git reset --hard master \
-  && export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH" \
+# 2. A 机器：取回 → 验证 → 推送
+#    fetch 的目标不能直接写 master:master —— git 拒绝 fetch 进"当前已检出的分支"，
+#    所以先落到 FETCH_HEAD 再 reset。
+ssh main 'cd ~/agent-session-client && export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH" \
+  && git fetch /tmp/asc.bundle master && git reset --hard FETCH_HEAD \
   && cargo test && npm test && npm run build \
   && git push origin master'
 ```
 
-验证失败就先别 push，回本机改完重新打包。`git reset --hard master` 会用 git 重新落盘
+验证失败就先别 push，回本机改完重新打包。`git reset --hard` 会用 git 重新落盘
 （行尾符由 git 规范化），所以 A 机器的工作区始终是干净的。
 
 ## 常用命令
