@@ -23,12 +23,15 @@ Windows 桌面客户端（Tauri 2 + React + xterm.js），把远端 Linux 服务
 - **没有 webkit2gtk，本机不能构建/运行 Tauri GUI**——GUI 构建只在 GitHub Actions（windows-latest）。不要尝试在本地装 GUI 依赖。
 - Node 24 + npm，前端依赖已装（`node_modules` 在）。
 
-## 验证命令（提交前必跑）
+## 常用命令
 
 ```bash
-cargo test            # core + src-tauri 全部单测/集成测试
-npm test              # vitest（前端纯函数单测）
-npm run build         # tsc 严格模式 + vite build
+npm ci                # 安装前端依赖
+cargo test            # core + src-tauri 全部单测/集成测试（提交前必跑）
+npm test              # vitest（前端纯函数单测，提交前必跑）
+npm run build         # tsc 严格模式 + vite build（提交前必跑）
+npx tauri dev         # 开发模式运行 GUI（仅 Windows/有 webkit2gtk 的机器）
+npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器）
 ```
 
 `src-tauri` 的真实编译由 CI 首次保证；本地只保证 `cargo test`（不含 GUI 链接）。
@@ -48,9 +51,20 @@ npm run build         # tsc 严格模式 + vite build
 - TDD：先写会失败的测试，再写最小实现；提交粒度一个逻辑变更。
 - 最小 diff：不加投机抽象、不加没被要求的配置项。
 
-## 当前状态（2026-09-11）
+## 当前状态（2026-09-12）
 
 - 版本 `0.1.3`；计划的 10 个任务全部完成并合入 `master`；工作分支 `feat/core`。
+- 2026-09-12 新增：应用内配置编辑（`save_config` 命令 + 设置面板）、agent 品牌图标、UI 精修（`5836d6c`），待用户在 Windows 上目视确认。
 - CI：push 到 `master` 或手动 dispatch 触发 Windows 构建，产物发 GitHub Releases。
 - `examples/config.example.json` 里 `REPLACE_WITH_*` 占位符由用户填真实值（host、agent 启动命令）。
 - 遗留：无已知未完成计划任务；新需求按"设计确认 → 实现"流程走，勿直接动代码。
+- 跨机器协作进展见 `WORKLOG.md`（每次会话收工时更新）。
+
+## 收工规矩
+
+每次会话结束前，无论任务是否完成，必须：
+
+1. 更新 WORKLOG.md（倒序排列，最新在顶部）：写日期、本次做了什么、当前状态、下一步计划、踩过的坑
+2. git commit（可用 docs(worklog): 前缀），有远端则 push
+
+当用户只说"收工"两个字时，立即执行以上流程，除此之外不做任何其他事。
