@@ -33,9 +33,11 @@ fn main() {
         // 退出时关掉文件面板那条常驻 ssh：进程退出不会替我们收子进程，
         // 不 kill 它就会留在后台（ledger 第 2 条：ssh 必须显式 kill + wait）。
         if let tauri::RunEvent::Exit = event {
-            if let Some(state) = app.try_state::<commands::AppState>() {
-                state.file_chan.lock().unwrap().take();
-            }
+            app.state::<commands::AppState>()
+                .file_chan
+                .lock()
+                .unwrap()
+                .take();
         }
     });
 }
