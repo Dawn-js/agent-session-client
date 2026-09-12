@@ -75,6 +75,9 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
 `cargo test` 覆盖 `core`；`src-tauri` 单独用 `cargo check -p agent-session-client` 验证（A 机器上能过，0 warning 是基线）。
 改完 `src-tauri` 记得 `touch` 源文件强制重编，别被缓存结果骗过。真正的链接与打包由 CI 保证。
 
+**改过 `tauri.conf.json` 的话，上面两条都不够**——`cargo check` 不做 JSON schema 校验。
+必须再跑一次 `npx tauri build 2>&1 | head -12` 看它有没有报配置错（见踩坑 ledger 第 12 条）。
+
 ## 前人踩过的坑（SDD ledger 沉淀，勿重蹈）
 
 1. `portable_pty` 对**被信号杀死的子进程报告 exit code 1**，信号本身拿不到——`classify_ssh(1, "")` 不等于"干净退出"。
@@ -117,6 +120,26 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     报 `bash: line 1: cd: ~: No such file or directory`。`~` 必须换成 `$HOME` 并放在引号**外面**
     （shell 里 `$HOME'/x'` 是合法的词拼接）。见 `files::quote_dir`——**以后凡是把路径拼进远端命令，
     都要走它而不是直接 `shell_quote`**。
+
+12. **`cargo check` 校验不了 `tauri.conf.json`，只有 tauri CLI 能**。这条坑掉过一次 CI：
+    `"theme": "dark"` 看着对（`Display for Theme` 返回的就是小写），`cargo check` 也过——
+    因为 Rust 侧的 `Deserialize` 做了 `to_lowercase()`，什么都收。
+    但 **JSON schema 是用 `schemars` 按枚举【变体名】生成的，只认 `"Dark"`**，
+    而 `tauri-action` 走的是 schema 校验，于是构建失败：
+
+    ```
+    Error `tauri.conf.json` error on `app > windows > 0 > theme`:
+    "dark" is not valid under any of the schemas listed in the 'anyOf' keyword
+    ```
+
+    **改完 `tauri.conf.json` 必须跑一次 CLI 校验**（它会一路跑到 `beforeBuildCommand` 才算过；
+    在 A 机器上后续会因缺 webkit2gtk 停下，那是预期内的）：
+
+    ```bash
+    npx tauri build 2>&1 | head -12
+    ```
+
+    枚举字段一律用**变体名原样**（`"Dark"` 而不是 `"dark"`），别照 `Display` 实现推断。
 
 ## 约定
 
