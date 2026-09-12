@@ -103,6 +103,64 @@ pub fn join_path(dir: &str, name: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+}
+
+/// 列 agent 已安装 skill 的远端命令。
+///
+/// 层级不固定：有的在 `skills/<name>/SKILL.md`，有的在 `skills/<category>/<name>/SKILL.md`
+/// （实测 5 个单层 + 67 个双层）。所以拿 `SKILL.md` 当唯一标识去找，而不是假设深度。
+///
+/// 输出三列：**目录名 / frontmatter 的 name / description**。
+/// name 可能缺失，解析层用目录名兜底，所以两列都得给。
+pub fn build_skills_cmd(dir: &str) -> String {
+    format!(
+        "find {} -maxdepth 3 -name SKILL.md 2>/dev/null | while read -r f; do \
+         n=$(sed -n 's/^name:[[:space:]]*//p' \"$f\" | head -1); \
+         d=$(sed -n 's/^description:[[:space:]]*//p' \"$f\" | head -1); \
+         printf '%s\\t%s\\t%s\\n' \"$(basename \"$(dirname \"$f\")\")\" \"$n\" \"$d\"; \
+         done",
+        quote_dir(dir)
+    )
+}
+
+pub fn parse_skills_output(out: &str) -> Vec<Skill> {
+    let mut skills: Vec<Skill> = out
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let dir_name = parts.next()?.trim();
+            let declared = parts.next().unwrap_or("").trim();
+            let description = parts.next().unwrap_or("").trim();
+            // frontmatter 里没写 name 的，退回目录名
+            let name = unquote(if declared.is_empty() { dir_name } else { declared });
+            if name.is_empty() {
+                return None;
+            }
+            Some(Skill { name, description: unquote(description) })
+        })
+        .collect();
+
+    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    skills
+}
+
+/// YAML 里字符串常带成对引号，去掉。只剥 ASCII 引号，所以按字节切是安全的。
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return s[1..s.len() - 1].to_string();
+        }
+    }
+    s.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +257,48 @@ mod tests {
     fn join_path_avoids_double_slash() {
         assert_eq!(join_path("/home", "ubuntu"), "/home/ubuntu");
         assert_eq!(join_path("/", "home"), "/home");
+    }
+
+    #[test]
+    fn skills_cmd_searches_by_skill_md_not_by_depth() {
+        // 层级不固定（5 个单层 + 67 个双层），所以不能假设深度
+        let cmd = build_skills_cmd("~/.hermes/skills");
+        assert!(cmd.starts_with("find $HOME'/.hermes/skills' -maxdepth 3 -name SKILL.md"));
+        // 目录名也要输出，供 name 缺失时兜底
+        assert!(cmd.contains("basename"));
+    }
+
+    #[test]
+    fn parses_skills_and_strips_yaml_quotes() {
+        let out = "github\tgithub\t\"GitHub via gh CLI: PRs, issues.\"\n\
+                   p5js\tp5js\t\"p5.js sketches: gen art, shaders.\"\n";
+        let got = parse_skills_output(out);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "github");
+        assert_eq!(got[0].description, "GitHub via gh CLI: PRs, issues.");
+    }
+
+    #[test]
+    fn falls_back_to_dir_name_when_name_missing() {
+        // frontmatter 没写 name 时用目录名兜底，而不是显示空白
+        let got = parse_skills_output("my-skill\t\t\"desc\"\n");
+        assert_eq!(got[0].name, "my-skill");
+        assert_eq!(got[0].description, "desc");
+    }
+
+    #[test]
+    fn handles_single_quotes_and_missing_description() {
+        let got = parse_skills_output("a\ta\t'single quoted'\nb\tb\n");
+        assert_eq!(got[0].description, "single quoted");
+        assert_eq!(got[1].description, "");
+    }
+
+    #[test]
+    fn skills_sorted_case_insensitively() {
+        let names: Vec<_> = parse_skills_output("z\tzeta\t\nalpha\tAlpha\t\n")
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, vec!["Alpha", "zeta"]);
     }
 }

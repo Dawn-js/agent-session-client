@@ -575,6 +575,66 @@ code {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
+/* ---------- 文件面板页签 ---------- */
+
+.files-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+
+.files-tab {
+  flex: 1;
+  padding: 4px 0;
+  font-size: 11px;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.files-tab:hover {
+  color: var(--text);
+}
+
+.files-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- 技能列表 ---------- */
+
+.skill-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 7px;
+  border-radius: 5px;
+}
+
+.skill-row:hover {
+  background: var(--bg-elevated);
+}
+
+.skill-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.skill-desc {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  /* 描述长短不一，最多两行，超出省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---------- 服务器文件面板 ---------- */
 
 .files {

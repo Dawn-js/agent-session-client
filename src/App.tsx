@@ -26,6 +26,8 @@ export default function App() {
   // 会话 id -> host。文件面板要知道当前会话连的是哪台机器，
   // 但 id 是按 agent 命名的（见 start_session），host 只能在这里记下来。
   const [hostOf, setHostOf] = useState<Record<string, string>>({});
+  // 会话 id -> agent id。技能页要去 `~/.<agent>/skills` 找，同样从 id 里读不出来。
+  const [agentOf, setAgentOf] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(true);
@@ -99,6 +101,7 @@ export default function App() {
     try {
       const id = await invoke<string>("start_session", { host, agent, project: "" });
       setHostOf((prev) => ({ ...prev, [id]: host }));
+      setAgentOf((prev) => ({ ...prev, [id]: agent }));
       setSessions((prev) => applyState(prev, id, "connecting"));
       setActive(id);
     } catch (error) {
@@ -236,7 +239,12 @@ export default function App() {
         )}
       </main>
 
-      {filesOpen && <FilePanel host={active ? hostOf[active] ?? null : null} />}
+      {filesOpen && (
+        <FilePanel
+          host={active ? hostOf[active] ?? null : null}
+          agent={active ? agentOf[active] ?? null : null}
+        />
+      )}
 
       {settingsOpen && config && (
         <SettingsModal

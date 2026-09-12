@@ -10,7 +10,7 @@ use session_core::config::{parse_config, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
 };
-use session_core::files::{build_list_cmd, join_path, parse_listing};
+use session_core::files::{build_list_cmd, build_skills_cmd, join_path, parse_listing, parse_skills_output};
 use session_core::session::SessionState;
 
 use crate::runner::{run_session, RunnerMsg};
@@ -370,4 +370,55 @@ pub async fn list_dir(
         })
         .collect();
     Ok(DirView { dir: listing.dir, entries })
+}
+
+#[derive(Serialize)]
+pub struct SkillView {
+    pub name: String,
+    pub description: String,
+}
+
+/// 列某个 agent 已安装的 skill（不是随 agent 预装的那批）。
+///
+/// 目录约定为 `~/.<agent>/skills`，`agent` 直接来自配置里的 id，所以没有硬编码映射表。
+/// 认不出来的 agent 会返回空列表而不是报错 —— 面板显示「未找到」比弹错误合适。
+#[tauri::command]
+pub async fn list_skills(
+    state: State<'_, AppState>,
+    host: String,
+    agent: String,
+) -> Result<Vec<SkillView>, String> {
+    let target = {
+        let guard = state.config.lock().unwrap();
+        let cfg = guard.as_ref().ok_or("config not loaded")?;
+        cfg.to_ssh_target(&host)
+            .ok_or_else(|| format!("unknown host: {host}"))?
+    };
+
+    // agent 会被 quote_dir 整体加引号，拼进路径不会造成注入
+    let argv =
+        session_core::command::build_exec_argv(&target, &build_skills_cmd(&format!("~/.{agent}/skills")));
+
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        std::process::Command::new(&argv[0]).args(&argv[1..]).output()
+    })
+    .await
+    .map_err(|e| format!("列技能任务失败: {e}"))?
+    .map_err(|e| format!("执行 ssh 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let msg = stderr.trim();
+        return Err(if msg.is_empty() {
+            format!("ssh 退出码 {:?}", output.status.code())
+        } else {
+            msg.to_string()
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_skills_output(&stdout)
+        .into_iter()
+        .map(|s| SkillView { name: s.name, description: s.description })
+        .collect())
 }
