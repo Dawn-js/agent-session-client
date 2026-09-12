@@ -148,10 +148,9 @@ fn config_candidates(app: &AppHandle, override_path: Option<&str>) -> Vec<PathBu
     {
         candidates.push(dir.join("config.json"));
     }
-    // TEMP: 待 commit 4 恢复
-    for dir in [exe_dir.as_deref(), cwd.as_deref()].into_iter().flatten() {
-        candidates.push(dir.join("examples").join("config.example.json"));
-    }
+    // 不再把 `examples/config.example.json` 当候选：那是「给人复制的模板」，
+    // 里面的 REPLACE_WITH_* 占位符会通过校验，于是变成一个看着能用、点了
+    // 必然连不上的主机。样例文件本身仍保留给用户手工参考。
 
     unique_paths(candidates)
 }

@@ -72,19 +72,27 @@ pub fn unique_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
 /// JSON template written by the "generate example config" first-run action.
 ///
 /// Placeholders are intentionally non-empty so the template passes validation;
-/// the user is expected to replace them with real values.
+/// the user is expected to replace them with real values. The agent rows are
+/// derived from the registry so their ids/labels can never drift from what
+/// `probe_agents` reports.
 pub fn example_config_json() -> String {
-    r#"{
-  "hosts": [
-    { "name": "main", "host": "REPLACE_WITH_HOST", "user": "REPLACE_WITH_USER" }
-  ],
-  "agents": [
-    { "id": "hermes", "label": "Hermes Agent", "cmd": "REPLACE_WITH_HERMES_CMD" },
-    { "id": "harness", "label": "DeepSeek Harness", "cmd": "REPLACE_WITH_HARNESS_CMD" }
-  ]
-}
-"#
-    .to_string()
+    let agents: Vec<serde_json::Value> = crate::agents::KNOWN_AGENTS
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "id": a.id,
+                "label": a.label,
+                "cmd": format!("REPLACE_WITH_{}_CMD", a.id.to_ascii_uppercase()),
+            })
+        })
+        .collect();
+    let template = serde_json::json!({
+        "hosts": [
+            { "name": "main", "host": "REPLACE_WITH_HOST", "user": "REPLACE_WITH_USER" }
+        ],
+        "agents": agents,
+    });
+    format!("{template:#}\n")
 }
 
 #[cfg(test)]
@@ -198,6 +206,17 @@ mod tests {
         let cfg = parse_config(&example_config_json()).unwrap();
         assert!(validate(&cfg).is_ok());
         assert_eq!(cfg.hosts[0].name, "main");
+    }
+
+    #[test]
+    fn example_template_agents_track_the_registry() {
+        let template = example_config_json();
+        // 用户要照着这份模板手改，必须是格式化过的多行 JSON
+        assert!(template.contains("\n  \"agents\""), "模板应是多行格式：{template}");
+        let cfg = parse_config(&template).unwrap();
+        let ids: Vec<&str> = cfg.agents.iter().map(|a| a.id.as_str()).collect();
+        let registry: Vec<&str> = crate::agents::KNOWN_AGENTS.iter().map(|a| a.id).collect();
+        assert_eq!(ids, registry, "模板的 agent id 必须与探测注册表一致");
     }
 
     #[test]

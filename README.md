@@ -85,7 +85,11 @@ sudo dnf install tmux     # Fedora/RHEL
 
 ### 2. 客户端（Windows）
 
-从 [Releases](../../releases) 下载最新的安装包安装即可。首次打开若没有配置，界面会提示「未找到配置文件」并引导你生成。
+从 [Releases](../../releases) 下载最新的安装包安装即可。
+
+首次打开若没有配置，客户端会**自动读取本机 `~/.ssh/config`，把里面的 `Host` 别名列出来** —— 点一下「用 `main` 开始」即可，服务器地址、用户名都由 ssh 自己解析，不用手填。生成配置时会同时带上内置的 agent 列表（hermes / dsh），之后可在「⚙ 编辑配置」里删改或探测。
+
+> 若本机没有 ssh 配置，才会退回到「生成示例配置」——那是一份带 `REPLACE_WITH_*` 占位符的模板，生成后会自动打开编辑面板让你替换。
 
 ### 3. 从源码构建
 
@@ -148,10 +152,10 @@ npx tauri build        # 打包发布版
 2. `<当前工作目录>/config.json`
 3. `<exe 所在目录>/config.json`
 4. **用户配置目录** `<app_config_dir>/config.json`（Windows 通常为 `%APPDATA%\dev.local.agent-session-client\config.json`）
-5. `<exe 所在目录>/examples/config.example.json`
-6. `<当前工作目录>/examples/config.example.json`
 
-若都找不到，界面会显示**已查找的全部路径**并提供「**生成示例配置**」（写入第 4 项）与「重新加载」；若文件存在但字段非法，会显示**文件路径与具体错误**（如 `hosts[0].name: must not be empty`）。
+> `examples/config.example.json` **不参与自动查找** —— 那是给人复制的模板，里面的占位符会通过校验，当成配置加载只会得到一个连不上的主机。
+
+若都找不到，界面会先列出**本机 `~/.ssh/config` 里的主机**供一键导入；一个都没有时，才显示**已查找的全部路径**并提供「**生成示例配置**」（写入第 4 项）与「重新加载」。若文件存在但字段非法，会显示**文件路径与具体错误**（如 `hosts[0].name: must not be empty`）。
 
 开发模式下直接放一个 `config.json` 在项目根目录即可，或用环境变量显式指定（Vite 构建期变量）：
 

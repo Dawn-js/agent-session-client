@@ -4,6 +4,6 @@
   ],
   "agents": [
     { "id": "hermes", "label": "Hermes Agent", "cmd": "REPLACE_WITH_HERMES_CMD" },
-    { "id": "harness", "label": "DeepSeek Harness", "cmd": "REPLACE_WITH_HARNESS_CMD" }
+    { "id": "dsh", "label": "DeepSeek Harness", "cmd": "REPLACE_WITH_DSH_CMD" }
   ]
 }
