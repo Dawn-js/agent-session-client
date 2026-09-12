@@ -135,15 +135,45 @@ body {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
+  gap: 6px;
+  padding: 4px 6px 4px 9px;
   border-radius: 7px;
   border: 1px solid transparent;
   background: var(--bg-elevated);
   color: var(--text);
+}
+
+/* 现在是 li 里的主按钮，外层不再是按钮 */
+.session-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  background: none;
+  border: 0;
+  color: inherit;
   cursor: pointer;
-  text-align: left;
   font: inherit;
+  text-align: left;
+}
+
+.session-close {
+  flex: none;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+.session-close:hover {
+  color: var(--text);
+  background: var(--bg-active);
 }
 
 .session:hover {
@@ -161,7 +191,7 @@ body {
   white-space: nowrap;
 }
 
-.session .badge {
+.session-main .badge {
   margin-left: auto;
 }
 
@@ -522,6 +552,63 @@ code {
 
 .small-btn:hover {
   border-color: var(--accent);
+}
+
+/* ---------- 探测已装 agent ---------- */
+
+.probe-row {
+  display: flex;
+  gap: 6px;
+}
+
+.probe-row select {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.discovered {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 7px;
+}
+
+.discovered-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discovered-id {
+  font-weight: 600;
+}
+
+.discovered-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discovered-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-code);
+  font-size: 12px;
+}
+
+.discovered-row .small-btn {
+  flex: none;
 }
 
 .edit-row {

@@ -13,6 +13,11 @@ export function applyState(sessions: Session[], id: string, state: SessionState)
   return sessions.map((s, i) => (i === idx ? { ...s, state } : s));
 }
 
+/** Drop a session row (close button, or a `closed` event for a live session). */
+export function removeSession(sessions: Session[], id: string): Session[] {
+  return sessions.filter((s) => s.id !== id);
+}
+
 /** Human label + CSS tone for each connection state (used by the UI). */
 export const STATE_META: Record<SessionState, { label: string; tone: string }> = {
   connecting: { label: "连接中", tone: "connecting" },

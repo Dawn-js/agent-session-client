@@ -5,7 +5,7 @@ import { Terminal, type ThemeName } from "./Terminal";
 import { AgentIcon } from "./icons";
 import { FilePanel } from "./FilePanel";
 import { SettingsModal } from "./SettingsModal";
-import { applyState, STATE_META, type Session, type SessionState } from "./sessions";
+import { applyState, removeSession, STATE_META, type Session, type SessionState } from "./sessions";
 import {
   isConfigError,
   loadConfig,
@@ -39,6 +39,9 @@ export default function App() {
   const [filesOpen, setFilesOpen] = useState(true);
   const [theme, setTheme] = useState<ThemeName>(initialTheme);
   const writerRef = useRef<((d: string) => void) | null>(null);
+  // 用户已经关掉的会话 id。runner 可能还在飞行中（重连、退出），
+  // 它发来的 state/output/notice 一律丢弃 —— 否则 applyState 会把行加回来。
+  const closedRef = useRef<Set<string>>(new Set());
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -70,9 +73,17 @@ export default function App() {
 
   useEffect(() => {
     const unlisten = listen<{ id: string; state: SessionState }>("session-state", (e) => {
-      setSessions((prev) => applyState(prev, e.payload.id, e.payload.state));
+      const { id, state } = e.payload;
+      if (closedRef.current.has(id)) return;
+      // closed 是终态：行直接消失，而不是显示成"已关闭"
+      if (state === "closed") {
+        setSessions((prev) => removeSession(prev, id));
+        return;
+      }
+      setSessions((prev) => applyState(prev, id, state));
     });
     const unlistenNotice = listen<{ id: string; message: string }>("session-notice", (e) => {
+      if (closedRef.current.has(e.payload.id)) return;
       setNotices((prev) => [...prev, `${e.payload.id}: ${e.payload.message}`]);
     });
     return () => {
@@ -84,7 +95,8 @@ export default function App() {
   useEffect(() => {
     if (!active) return;
     const un = listen<{ id: string; data: string }>("session-output", (e) => {
-      if (e.payload.id === active) writerRef.current?.(e.payload.data);
+      if (e.payload.id !== active || closedRef.current.has(e.payload.id)) return;
+      writerRef.current?.(e.payload.data);
     });
     return () => {
       un.then((f) => f());
@@ -115,11 +127,27 @@ export default function App() {
       const id = await invoke<string>("start_session", { host, agent, project: "" });
       setHostOf((prev) => ({ ...prev, [id]: host }));
       setAgentOf((prev) => ({ ...prev, [id]: agent }));
+      // 重新开始同一个 id：撤掉墓碑，否则它的事件会被当成已关闭而丢弃
+      closedRef.current.delete(id);
       setSessions((prev) => applyState(prev, id, "connecting"));
       setActive(id);
     } catch (error) {
       setActionError(String(error));
     }
+  };
+
+  const closeSession = async (id: string) => {
+    // 先立墓碑再发关闭：runner 之后可能还发 exited / output 事件，
+    // 不挡住的话 applyState 会把刚关掉的行又加回来。
+    closedRef.current.add(id);
+    try {
+      // 只断开本地 ssh，远端 tmux 会话保留，之后还能接回来
+      await invoke("close_session", { id, killRemote: false });
+    } catch {
+      // runner 已经 give-up 时后端已清表，会报 unknown session —— 那本来就是关掉的会话
+    }
+    setSessions((prev) => removeSession(prev, id));
+    if (active === id) setActive(null);
   };
 
   const generateConfig = async () => {
@@ -166,16 +194,22 @@ export default function App() {
           ) : (
             <ul className="session-list">
               {sessions.map((s) => (
-                <li key={s.id}>
-                  <button
-                    className={`session${s.id === active ? " is-active" : ""}`}
-                    onClick={() => setActive(s.id)}
-                  >
+                <li key={s.id} className={`session${s.id === active ? " is-active" : ""}`}>
+                  <button className="session-main" onClick={() => setActive(s.id)}>
                     <AgentIcon agent={s.id} />
                     <span className="session-id">{s.id}</span>
                     <span className={`badge tone-${STATE_META[s.state].tone}`}>
                       {STATE_META[s.state].label}
                     </span>
+                  </button>
+                  {/* 关闭按钮必须是兄弟节点：button 里不能再套 button */}
+                  <button
+                    className="session-close"
+                    aria-label="关闭会话"
+                    title="关闭会话（仅断开本地连接，远端 tmux 会话保留）"
+                    onClick={() => void closeSession(s.id)}
+                  >
+                    ✕
                   </button>
                 </li>
               ))}

@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 use session_core::backoff::Backoff;
 use session_core::command::{build_probe_argv, build_session_argv, destination, shell_quote, SshTarget};
 use session_core::exit::{classify_ssh, SshOutcome};
-use session_core::reconnect::{classify_unexpected_exit, decide, RetryDecision};
+use session_core::reconnect::{
+    classify_unexpected_exit, decide, drain_pending, parse_resize_frame, wait_for_close,
+    RetryDecision, CLOSE_FRAME,
+};
 use session_core::session::{transition, SessionEvent, SessionState};
 use session_core::transport::PtySession;
 
@@ -55,14 +58,16 @@ pub fn run_session(
     target: SshTarget,
     session: String,
     agent_cmd: String,
-    mut cols: u16,
-    mut rows: u16,
+    cols: u16,
+    rows: u16,
     input_rx: mpsc::Receiver<Vec<u8>>,
     kill_remote_on_close: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut backoff = Backoff::default();
     // I3: 首次探测必然 Ok(false)（会话尚不存在），不应发"原会话已不在"提示
     let mut first_attempt = true;
+    // 尺寸由 resize 控制帧更新；退避期间也必须接住，否则重连出来的 PTY 用旧尺寸
+    let mut dims = (cols, rows);
 
     loop {
         let is_first_probe = first_attempt;
@@ -83,7 +88,12 @@ pub fn run_session(
                 match decide(kind, &mut backoff) {
                     RetryDecision::Retry(delay) => {
                         let _ = tx.send(RunnerMsg::State(SessionState::Retrying));
-                        thread::sleep(delay);
+                        // 退避等待必须能被 __close 打断：网络类失败会无限重连，
+                        // 用 sleep 的话这一轮就再也收不到用户的关闭请求
+                        if wait_for_close(&input_rx, delay, &mut dims) {
+                            finish_close(&tx, &target, &session, &kill_remote_on_close);
+                            return;
+                        }
                         continue;
                     }
                     RetryDecision::GiveUp => {
@@ -104,8 +114,15 @@ pub fn run_session(
             }
         }
 
+        // probe_session 是阻塞的（最长 ConnectTimeout=10s），期间用户可能已经点了关闭。
+        // 不把积压的控制帧收掉，就会在关闭之后又 spawn 一个 PTY。
+        if drain_pending(&input_rx, &mut dims) {
+            finish_close(&tx, &target, &session, &kill_remote_on_close);
+            return;
+        }
+
         let argv = build_session_argv(&target, &session, &agent_cmd);
-        let mut pty = match PtySession::spawn(&argv, cols, rows) {
+        let mut pty = match PtySession::spawn(&argv, dims.0, dims.1) {
             Ok(p) => p,
             Err(e) => {
                 let _ = tx.send(RunnerMsg::Notice(format!("spawn failed: {e}")));
@@ -156,21 +173,14 @@ pub fn run_session(
         loop {
             match input_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(frame) => {
-                    if let Some(dims) = frame.strip_prefix(b"__resize:") {
-                        if let Ok(s) = std::str::from_utf8(dims) {
-                            if let Some((c, r)) = s.split_once('x') {
-                                if let (Ok(c), Ok(r)) = (c.parse(), r.parse()) {
-                                    cols = c;
-                                    rows = r;
-                                    let _ = pty.resize(cols, rows);
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    if frame == b"__close" {
+                    if frame.as_slice() == CLOSE_FRAME {
                         closed = true;
                         break;
+                    }
+                    if let Some(size) = parse_resize_frame(&frame) {
+                        dims = size;
+                        let _ = pty.resize(dims.0, dims.1);
+                        continue;
                     }
                     let _ = pty.write(&frame);
                 }
@@ -191,19 +201,9 @@ pub fn run_session(
         let _ = reader_handle.join();
 
         if closed {
-            if kill_remote_on_close.load(Ordering::SeqCst) {
-                let remote = format!("tmux kill-session -t {}", shell_quote(&session));
-                let mut argv = vec!["-o".to_string(), "BatchMode=yes".to_string()];
-                argv.extend(target.extra_ssh_args.iter().cloned());
-                argv.push(destination(&target));
-                argv.push(remote);
-                let mut kill_cmd = StdCommand::new("ssh");
-                kill_cmd.args(&argv);
-                let _ = hide_console(&mut kill_cmd).status();
-            }
-            let _ = tx.send(RunnerMsg::State(SessionState::Closed));
             // R11.2/R11.3: 用户关闭路径也必须 wait 收割子进程，否则留下僵尸
             let _ = pty.wait();
+            finish_close(&tx, &target, &session, &kill_remote_on_close);
             return;
         }
 
@@ -213,11 +213,43 @@ pub fn run_session(
         let _ = tx.send(RunnerMsg::State(SessionState::Retrying));
         // decide() 已经给出退避时长，不要再调 next_delay()（R7）
         match decide(kind, &mut backoff) {
-            RetryDecision::Retry(delay) => thread::sleep(delay),
+            RetryDecision::Retry(delay) => {
+                if wait_for_close(&input_rx, delay, &mut dims) {
+                    finish_close(&tx, &target, &session, &kill_remote_on_close);
+                    return;
+                }
+            }
             RetryDecision::GiveUp => {
                 let _ = tx.send(RunnerMsg::State(SessionState::Exited));
                 return;
             }
         }
     }
+}
+
+/// 远端销毁 tmux 会话 —— 只在用户显式要求（kill_remote=true）时走这里。
+/// 尽力而为：失败无非是远端会话多留一会儿，不该影响本地关闭。
+fn kill_remote_session(target: &SshTarget, session: &str) {
+    let remote = format!("tmux kill-session -t {}", shell_quote(session));
+    let mut argv = vec!["-o".to_string(), "BatchMode=yes".to_string()];
+    argv.extend(target.extra_ssh_args.iter().cloned());
+    argv.push(destination(target));
+    argv.push(remote);
+    let mut kill_cmd = StdCommand::new("ssh");
+    kill_cmd.args(&argv);
+    let _ = hide_console(&mut kill_cmd).status();
+}
+
+/// 关闭收尾：按需销毁远端会话，再发 `Closed`。
+/// 不碰 PTY —— 有 PTY 的路径必须自己先 kill + wait（ledger 2/3：PtySession 没有 Drop）。
+fn finish_close(
+    tx: &Sender<RunnerMsg>,
+    target: &SshTarget,
+    session: &str,
+    kill_remote_on_close: &std::sync::atomic::AtomicBool,
+) {
+    if kill_remote_on_close.load(Ordering::SeqCst) {
+        kill_remote_session(target, session);
+    }
+    let _ = tx.send(RunnerMsg::State(SessionState::Closed));
 }

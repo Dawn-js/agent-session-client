@@ -59,8 +59,16 @@ pub fn build_session_argv(target: &SshTarget, session: &str, agent_cmd: &str) ->
     argv
 }
 
+/// probe 远端会话是否已存在。和 `build_exec_argv` 一样加 `ConnectTimeout` / `BatchMode`：
+/// 主机不可达时不能让探测把那 2 分钟 TCP 超时当成「关闭信号的盲区」——
+/// 会话关闭要等探测返回才看得见（见 `reconnect::wait_for_close`）。
+/// `Command::output()` 的 stdin 是 null，需要口令的认证本来就过不去，所以 BatchMode 不改变结果。
 pub fn build_probe_argv(target: &SshTarget, session: &str) -> Vec<String> {
     let mut argv = base_argv(target);
+    argv.push("-o".into());
+    argv.push("ConnectTimeout=10".into());
+    argv.push("-o".into());
+    argv.push("BatchMode=yes".into());
     argv.push(destination(target));
     argv.push(format!("tmux has-session -t {}", shell_quote(session)));
     argv
@@ -124,6 +132,7 @@ mod tests {
         assert_eq!(build_probe_argv(&target(), "hermes-proj"), vec![
             "ssh",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+            "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
             "ubuntu@example.com",
             "tmux has-session -t 'hermes-proj'",
         ]);

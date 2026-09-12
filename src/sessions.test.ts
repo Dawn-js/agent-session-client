@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyState, STATE_META, type Session, type SessionState } from "./sessions";
+import { applyState, removeSession, STATE_META, type Session, type SessionState } from "./sessions";
 
 describe("applyState", () => {
   it("adds an unknown session", () => {
@@ -15,6 +15,23 @@ describe("applyState", () => {
     const before: Session[] = [{ id: "a", state: "connecting" }];
     applyState(before, "a", "retrying");
     expect(before[0].state).toBe("connecting");
+  });
+});
+
+describe("removeSession", () => {
+  it("drops only the matching session", () => {
+    const before: Session[] = [
+      { id: "a", state: "connected" },
+      { id: "b", state: "exited" },
+    ];
+    expect(removeSession(before, "a")).toEqual([{ id: "b", state: "exited" }]);
+  });
+
+  it("is a no-op for an unknown id and never mutates the input", () => {
+    const before: Session[] = [{ id: "a", state: "connected" }];
+    expect(removeSession(before, "zzz")).toEqual(before);
+    removeSession(before, "a");
+    expect(before).toHaveLength(1);
   });
 });
 
