@@ -28,6 +28,7 @@ fn main() {
             commands::save_config,
             commands::list_dir,
             commands::list_skills,
+            commands::probe_agents,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -1,6 +1,14 @@
 import { useState } from "react";
-import { saveConfig, type ConfigError, type ConfigView } from "./config";import {
+import {
+  probeAgents,
+  saveConfig,
+  type AgentView,
+  type ConfigError,
+  type ConfigView,
+} from "./config";
+import {
   buildConfigJson,
+  mergeDiscoveredAgents,
   toEditableAgents,
   toEditableHosts,
   type EditableAgent,
@@ -30,12 +38,49 @@ export function SettingsModal({
   const [agents, setAgents] = useState<EditableAgent[]>(() => toEditableAgents(config));
   const [errors, setErrors] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
+  // 探测：只能用**已保存**的主机名 —— 后端是按已加载配置解析 host→target 的，
+  // 面板里改了还没保存的主机它不认识。
+  const [probeHost, setProbeHost] = useState(() => config.hosts[0]?.name ?? "");
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [probeNote, setProbeNote] = useState<string | null>(null);
+  const [discovered, setDiscovered] = useState<AgentView[]>([]);
 
   const patchHost = (i: number, patch: Partial<EditableHost>) => {
     setHosts((prev) => prev.map((h, j) => (j === i ? { ...h, ...patch } : h)));
   };
   const patchAgent = (i: number, patch: Partial<EditableAgent>) => {
     setAgents((prev) => prev.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  };
+
+  const probe = async () => {
+    setProbing(true);
+    setProbeError(null);
+    setProbeNote(null);
+    try {
+      const found = await probeAgents(probeHost);
+      // 已经在配置里的不列出来，免得用户重复加入
+      const configured = new Set(agents.map((a) => a.id.trim()));
+      const fresh = found.filter((a) => !configured.has(a.id.trim()));
+      setDiscovered(fresh);
+      if (found.length === 0) setProbeNote("该主机上没有探测到已知 agent");
+      else if (fresh.length === 0) setProbeNote("探测到的 agent 都已经在配置里了");
+    } catch (error) {
+      setDiscovered([]);
+      setProbeError(String(error));
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const addDiscovered = (agent: AgentView) => {
+    setAgents((prev) => mergeDiscoveredAgents(prev, [agent]));
+    setDiscovered((prev) => prev.filter((a) => a.id !== agent.id));
+  };
+
+  const addAllDiscovered = () => {
+    setAgents((prev) => mergeDiscoveredAgents(prev, discovered));
+    setDiscovered([]);
   };
 
   const save = async () => {
@@ -129,6 +174,56 @@ export function SettingsModal({
                 + 添加 Agent
               </button>
             </div>
+
+            {/* 探测远端 PATH 上装了哪些已知 agent；加入只是写进下面的列表，保存才落盘 */}
+            <div className="probe-row">
+              <select
+                value={probeHost}
+                onChange={(e) => setProbeHost(e.target.value)}
+                disabled={config.hosts.length === 0}
+                aria-label="探测哪台主机"
+              >
+                {config.hosts.length === 0 ? (
+                  <option value="">（先添加主机）</option>
+                ) : (
+                  config.hosts.map((h) => (
+                    <option key={h.name} value={h.name}>
+                      {h.name}
+                    </option>
+                  ))
+                )}
+              </select>
+              <button
+                className="small-btn"
+                onClick={() => void probe()}
+                disabled={probing || !probeHost}
+              >
+                {probing ? "探测中…" : "🔍 探测已装 agent"}
+              </button>
+            </div>
+            {probeError && <p className="error">{probeError}</p>}
+            {probeNote && <p className="muted">{probeNote}</p>}
+            {discovered.length > 0 && (
+              <div className="discovered">
+                <div className="section-head">
+                  <span className="muted">探测到 {discovered.length} 个未配置的 agent</span>
+                  <button className="small-btn" onClick={addAllDiscovered}>
+                    全部加入
+                  </button>
+                </div>
+                {discovered.map((a) => (
+                  <div className="discovered-row" key={a.id}>
+                    <span className="discovered-id">{a.id}</span>
+                    <span className="muted discovered-label">{a.label}</span>
+                    <code className="discovered-cmd">{a.cmd}</code>
+                    <button className="small-btn" onClick={() => addDiscovered(a)}>
+                      加入
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {agents.map((a, i) => (
               <div className="edit-row" key={i}>
                 <input

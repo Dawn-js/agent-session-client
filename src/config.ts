@@ -50,6 +50,14 @@ export async function writeExampleConfig(): Promise<string> {
 }
 
 /**
+ * Probe a host for installed known agent CLIs. Returns candidates only —
+ * nothing is written to the config until the user adds them in the editor.
+ */
+export async function probeAgents(host: string): Promise<AgentView[]> {
+  return invoke<AgentView[]>("probe_agents", { host });
+}
+
+/**
  * Validate and save the edited config JSON to the user config dir.
  * Rejects with the backend's structured `{ kind: "invalid", errors }` payload
  * when a field fails validation, so the editor can point at the offending row.

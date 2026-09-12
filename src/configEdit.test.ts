@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ConfigView } from "./config";
+import type { AgentView, ConfigView } from "./config";
 import {
   buildConfigJson,
+  mergeDiscoveredAgents,
   toEditableAgents,
   toEditableHosts,
 } from "./configEdit";
@@ -26,6 +27,36 @@ describe("toEditable*", () => {
 
   it("copies agent fields verbatim", () => {
     expect(toEditableAgents(VIEW)).toEqual([{ id: "claude", label: "Claude Code", cmd: "claude" }]);
+  });
+});
+
+describe("mergeDiscoveredAgents", () => {
+  const existing = [{ id: "claude", label: "Claude Code", cmd: "claude" }];
+  const discovered: AgentView[] = [
+    { id: "claude", label: "Claude Code", cmd: "claude" },
+    { id: "hermes", label: "Hermes Agent", cmd: "hermes chat" },
+  ];
+
+  it("appends only agents that are not already configured", () => {
+    expect(mergeDiscoveredAgents(existing, discovered)).toEqual([
+      { id: "claude", label: "Claude Code", cmd: "claude" },
+      { id: "hermes", label: "Hermes Agent", cmd: "hermes chat" },
+    ]);
+  });
+
+  it("dedupes by trimmed id, so a blank row is not a wildcard", () => {
+    const got = mergeDiscoveredAgents(
+      [{ id: " new ", label: "New", cmd: "n" }],
+      [{ id: "new", label: "New", cmd: "n" }],
+    );
+    expect(got).toHaveLength(1);
+  });
+
+  it("skips empty ids and never mutates the input", () => {
+    const before = [...existing];
+    const got = mergeDiscoveredAgents(existing, [{ id: "  ", label: "", cmd: "" }]);
+    expect(got).toEqual(existing);
+    expect(existing).toEqual(before);
   });
 });
 

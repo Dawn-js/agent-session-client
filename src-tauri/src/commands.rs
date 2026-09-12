@@ -6,11 +6,13 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use session_core::agents::{build_probe_agents_cmd, parse_probe_agents_output};
 use session_core::config::{parse_config, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
 };
 use session_core::files::{build_list_cmd, build_skills_cmd, join_path, parse_listing, parse_skills_output};
+use session_core::reconnect::CLOSE_FRAME;
 use session_core::session::SessionState;
 
 use crate::filechan::FileChan;
@@ -359,7 +361,7 @@ pub fn close_session(state: State<AppState>, id: String, kill_remote: bool) -> R
     }
     let guard = state.inputs.lock().unwrap();
     let tx = guard.get(&id).ok_or_else(|| format!("unknown session: {id}"))?;
-    tx.send(b"__close".to_vec()).map_err(|e| e.to_string())
+    tx.send(CLOSE_FRAME.to_vec()).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -425,5 +427,25 @@ pub async fn list_skills(
     Ok(parse_skills_output(&stdout)
         .into_iter()
         .map(|s| SkillView { name: s.name, description: s.description })
+        .collect())
+}
+
+/// 探测某个 host 上装了哪些已知 agent。
+///
+/// 走文件面板那条长驻 ssh（`exec_remote`），不占用也不污染 PTY 会话。
+/// 返回的只是候选：写不写进配置由用户在设置面板里确认。
+#[tauri::command]
+pub async fn probe_agents(
+    state: State<'_, AppState>,
+    host: String,
+) -> Result<Vec<AgentView>, String> {
+    let stdout = exec_remote(&state, &host, build_probe_agents_cmd()).await?;
+    Ok(parse_probe_agents_output(&stdout)
+        .into_iter()
+        .map(|a| AgentView {
+            id: a.id.to_string(),
+            label: a.label.to_string(),
+            cmd: a.cmd.to_string(),
+        })
         .collect())
 }

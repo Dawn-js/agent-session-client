@@ -1,4 +1,4 @@
-import type { ConfigView } from "./config";
+import type { AgentView, ConfigView } from "./config";
 
 /** 设置面板里的可编辑 host 行（表单用字符串，保存时才转结构化 JSON）。 */
 export interface EditableHost {
@@ -27,6 +27,25 @@ export function toEditableHosts(config: ConfigView): EditableHost[] {
 
 export function toEditableAgents(config: ConfigView): EditableAgent[] {
   return config.agents.map((a) => ({ id: a.id, label: a.label, cmd: a.cmd }));
+}
+
+/**
+ * 把服务器探测到的 agent 追加进可编辑列表。已存在（按 trim 后的 id 比较）的不重复加，
+ * 空 id 直接跳过 —— 加入后仍要过一遍后端校验，这里只做去重。
+ */
+export function mergeDiscoveredAgents(
+  existing: EditableAgent[],
+  discovered: AgentView[],
+): EditableAgent[] {
+  const known = new Set(existing.map((a) => a.id.trim()));
+  const merged = [...existing];
+  for (const agent of discovered) {
+    const id = agent.id.trim();
+    if (!id || known.has(id)) continue;
+    known.add(id);
+    merged.push({ id: agent.id, label: agent.label, cmd: agent.cmd });
+  }
+  return merged;
 }
 
 /**

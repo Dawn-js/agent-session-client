@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod backoff;
 pub mod command;
 pub mod config;
