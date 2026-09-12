@@ -16,6 +16,9 @@
 - **深浅主题切换**：`<html data-theme>` + CSS 变量（组件里不再留硬编码颜色），
   xterm 配两套 ANSI 配色；换主题时只改 `term.options.theme`，不重建终端，避免丢掉整屏回滚。
   选择存 localStorage。
+- **长驻通道的收尾（同一轮补的）**：应用退出时 kill 掉那条 ssh（进程退出不会替我们收子进程，
+  不 kill 就是孤儿——ledger 第 2 条的同款问题）；`load_config` / `save_config` 换过配置后
+  丢弃旧通道，让它按新的 target 重建。
 
 **当前状态**
 
@@ -42,6 +45,12 @@
   所以 Rust 侧仍走 `main` 验证。**教训：只测一个端口就下结论，差点把错误结论写死在文档里。**
 - 改 `build_remote_tmux_cmd` 时有**两个**测试断言了这条命令（`builds_remote_tmux_cmd` 和
   `builds_session_argv_with_keepalive_and_tty`），只改第一个会漏。
+- Tauri 里 `app.state::<T>()` 是 **`Manager` trait 的方法**，要 `use tauri::Manager` 才能用，
+  否则报 `no method named 'state' found for reference '&AppHandle'`（看起来像 API 不存在）。
+  另外这个版本**没有 `try_state`**。事件循环要拿 managed state 就走 `app.state::<T>()`。
+- 编辑文件后 `git add -A` 偶尔会认为"没有变化"（git status 干净但内容确实改了），
+  此时 `git update-index --really-refresh` 刷新一下再 add。**提交后要确认 `git log -1`**，
+  别信那句 `nothing to commit` —— 本次出现过它照着打印、提交其实成功的情况。
 
 ## 2026-09-12（文件面板 / TUI 修复 / 应用图标）
 
