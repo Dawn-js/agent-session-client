@@ -19,9 +19,9 @@ pub enum RunnerMsg {
 }
 
 /// Windows 下从 GUI 进程启动控制台程序（ssh）会分配一个新控制台窗口，
-/// 于是每次探测/重试都会闪一个 cmd 窗口。加 CREATE_NO_WINDOW 抑制它。
+/// 于是每次探测/重试/列目录都会闪一个 cmd 窗口。加 CREATE_NO_WINDOW 抑制它。
 /// 其他平台为空操作。
-fn hide_console(cmd: &mut StdCommand) -> &mut StdCommand {
+pub fn hide_console(cmd: &mut StdCommand) -> &mut StdCommand {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

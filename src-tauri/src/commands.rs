@@ -13,6 +13,7 @@ use session_core::discovery::{
 use session_core::files::{build_list_cmd, build_skills_cmd, join_path, parse_listing, parse_skills_output};
 use session_core::session::SessionState;
 
+use crate::filechan::FileChan;
 use crate::runner::{run_session, RunnerMsg};
 
 #[derive(Serialize)]
@@ -51,6 +52,62 @@ pub struct AppState {
     pub config: Mutex<Option<session_core::config::Config>>,
     pub inputs: Arc<Mutex<HashMap<String, Sender<Vec<u8>>>>>,
     pub runners: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    /// 文件面板共用的那条 ssh（见 filechan.rs）。换 host 或空闲超时会重建。
+    pub file_chan: Arc<Mutex<Option<FileChan>>>,
+}
+
+/// 走长驻通道跑一条远端命令。通道不存在 / 换了 host / 断了就重建。
+///
+/// 必须 `spawn_blocking`：通道是阻塞读写，直接在 async 上下文里跑会卡住运行时
+/// （和原先 `Command::output()` 一样的坑）。
+async fn exec_remote(
+    state: &State<'_, AppState>,
+    host: &str,
+    cmd: String,
+) -> Result<String, String> {
+    let target = {
+        let guard = state.config.lock().unwrap();
+        let cfg = guard.as_ref().ok_or("config not loaded")?;
+        cfg.to_ssh_target(host)
+            .ok_or_else(|| format!("unknown host: {host}"))?
+    };
+
+    let chan = state.file_chan.clone();
+    let host = host.to_string();
+    tauri::async_runtime::spawn_blocking(move || with_chan(&chan, &target, &host, &cmd))
+        .await
+        .map_err(|e| format!("远端命令任务失败: {e}"))?
+}
+
+fn with_chan(
+    chan: &Arc<Mutex<Option<FileChan>>>,
+    target: &session_core::command::SshTarget,
+    host: &str,
+    cmd: &str,
+) -> Result<String, String> {
+    match once(chan, target, host, cmd) {
+        Ok(out) => Ok(out),
+        // 通道可能已经死了（远端断网、命令超时留下半截输出）：丢掉重建再来一次。
+        // 两条路都失败时，报第一次的错 —— 它更可能是真正的原因。
+        Err(first) => {
+            chan.lock().unwrap().take();
+            once(chan, target, host, cmd).map_err(|_| first)
+        }
+    }
+}
+
+fn once(
+    chan: &Arc<Mutex<Option<FileChan>>>,
+    target: &session_core::command::SshTarget,
+    host: &str,
+    cmd: &str,
+) -> Result<String, String> {
+    let mut guard = chan.lock().unwrap();
+    if guard.as_ref().map_or(true, |c| !c.usable(host)) {
+        // 旧通道在这里被替换掉，Drop 会 kill 掉它的 ssh
+        *guard = Some(FileChan::spawn(target, host)?);
+    }
+    guard.as_mut().unwrap().run(cmd)
 }
 
 /// Candidate config locations, highest priority first. The first existing file
@@ -317,10 +374,8 @@ pub struct DirView {
     pub entries: Vec<EntryView>,
 }
 
-/// 列远端目录。走一次性 ssh（`build_exec_argv`），不占用也不污染任何 PTY 会话。
-///
-/// 必须 `spawn_blocking`：`std::process::Command::output()` 是阻塞调用，
-/// 直接在 async 上下文里跑会卡住整个运行时（面板转圈时连事件都发不出去）。
+/// 列远端目录。走文件面板的长驻 ssh 通道（见 filechan.rs），
+/// 不占用也不污染任何 PTY 会话。
 ///
 /// 返回的 `dir` 是远端解析后的规范路径，前端**不要**自己拼 `~` 或 `..` 的上一级 ——
 /// 想看上一层就再传一次 `<dir>/..`，让远端去解析。
@@ -330,34 +385,7 @@ pub async fn list_dir(
     host: String,
     dir: String,
 ) -> Result<DirView, String> {
-    // 锁只在这一小段里持有——MutexGuard 不是 Send，跨 await 会编译不过
-    let target = {
-        let guard = state.config.lock().unwrap();
-        let cfg = guard.as_ref().ok_or("config not loaded")?;
-        cfg.to_ssh_target(&host)
-            .ok_or_else(|| format!("unknown host: {host}"))?
-    };
-
-    let argv = session_core::command::build_exec_argv(&target, &build_list_cmd(&dir));
-
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        std::process::Command::new(&argv[0]).args(&argv[1..]).output()
-    })
-    .await
-    .map_err(|e| format!("列目录任务失败: {e}"))?
-    .map_err(|e| format!("执行 ssh 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let msg = stderr.trim();
-        return Err(if msg.is_empty() {
-            format!("ssh 退出码 {:?}", output.status.code())
-        } else {
-            msg.to_string()
-        });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = exec_remote(&state, &host, build_list_cmd(&dir)).await?;
     let listing = parse_listing(&stdout);
     let entries = listing
         .entries
@@ -388,35 +416,8 @@ pub async fn list_skills(
     host: String,
     agent: String,
 ) -> Result<Vec<SkillView>, String> {
-    let target = {
-        let guard = state.config.lock().unwrap();
-        let cfg = guard.as_ref().ok_or("config not loaded")?;
-        cfg.to_ssh_target(&host)
-            .ok_or_else(|| format!("unknown host: {host}"))?
-    };
-
     // agent 会被 quote_dir 整体加引号，拼进路径不会造成注入
-    let argv =
-        session_core::command::build_exec_argv(&target, &build_skills_cmd(&format!("~/.{agent}/skills")));
-
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        std::process::Command::new(&argv[0]).args(&argv[1..]).output()
-    })
-    .await
-    .map_err(|e| format!("列技能任务失败: {e}"))?
-    .map_err(|e| format!("执行 ssh 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let msg = stderr.trim();
-        return Err(if msg.is_empty() {
-            format!("ssh 退出码 {:?}", output.status.code())
-        } else {
-            msg.to_string()
-        });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = exec_remote(&state, &host, build_skills_cmd(&format!("~/.{agent}/skills"))).await?;
     Ok(parse_skills_output(&stdout)
         .into_iter()
         .map(|s| SkillView { name: s.name, description: s.description })

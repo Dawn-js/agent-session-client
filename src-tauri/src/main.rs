@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod filechan;
 mod runner;
 
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ fn main() {
             config: Mutex::new(None),
             inputs: Arc::new(Mutex::new(HashMap::new())),
             runners: Arc::new(Mutex::new(HashMap::new())),
+            file_chan: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::load_config,

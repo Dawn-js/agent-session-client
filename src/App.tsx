@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Terminal } from "./Terminal";
+import { Terminal, type ThemeName } from "./Terminal";
 import { AgentIcon } from "./icons";
 import { FilePanel } from "./FilePanel";
 import { SettingsModal } from "./SettingsModal";
@@ -15,6 +15,12 @@ import {
 } from "./config";
 
 const CONFIG_OVERRIDE = import.meta.env.VITE_AGENT_SESSION_CONFIG as string | undefined;
+
+const THEME_KEY = "agent-sessions.theme";
+
+function initialTheme(): ThemeName {
+  return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+}
 
 export default function App() {
   const [config, setConfig] = useState<ConfigView | null>(null);
@@ -31,6 +37,7 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(true);
+  const [theme, setTheme] = useState<ThemeName>(initialTheme);
   const writerRef = useRef<((d: string) => void) | null>(null);
 
   const reload = useCallback(async () => {
@@ -54,6 +61,12 @@ export default function App() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // 主题只落在 <html data-theme> 上，剩下的全是 CSS 变量的事
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     const unlisten = listen<{ id: string; state: SessionState }>("session-state", (e) => {
@@ -129,13 +142,22 @@ export default function App() {
 
         {/* 开关放在侧边栏：无论有没有活动会话都可见，
             否则隐藏后没有会话就再也开不回来了 */}
-        <button
-          className={`panel-toggle${filesOpen ? " is-on" : ""}`}
-          onClick={() => setFilesOpen((open) => !open)}
-          title={filesOpen ? "隐藏服务器文件栏" : "显示服务器文件栏"}
-        >
-          {filesOpen ? "▸ 隐藏文件栏" : "◂ 显示文件栏"}
-        </button>
+        <div className="side-toggles">
+          <button
+            className={`panel-toggle${filesOpen ? " is-on" : ""}`}
+            onClick={() => setFilesOpen((open) => !open)}
+            title={filesOpen ? "隐藏服务器文件栏" : "显示服务器文件栏"}
+          >
+            {filesOpen ? "▸ 隐藏文件栏" : "◂ 显示文件栏"}
+          </button>
+          <button
+            className="panel-toggle"
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+          >
+            {theme === "dark" ? "浅色" : "深色"}
+          </button>
+        </div>
 
         <section className="panel">
           <h2 className="panel-title">会话</h2>
@@ -222,7 +244,12 @@ export default function App() {
                 notices.map((n, i) => <div key={i}>{n}</div>)
               )}
             </div>
-            <Terminal onData={onData} onResize={onResize} registerWriter={registerWriter} />
+            <Terminal
+              onData={onData}
+              onResize={onResize}
+              registerWriter={registerWriter}
+              theme={theme}
+            />
           </>
         ) : (
           <div className="welcome">

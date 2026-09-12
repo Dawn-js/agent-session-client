@@ -30,8 +30,17 @@ pub fn destination(target: &SshTarget) -> String {
     }
 }
 
+/// 注意前面的 `set -g mouse on`：tmux 的 mouse 模式默认是关的，不开的话滚轮
+/// 事件在 tmux 里不产生任何滚动（只有 mouse on 时 tmux 才会进 copy-mode 翻历史）。
+///
+/// 代价：mouse on 之后 tmux 会接管鼠标拖拽选择，想用系统选区复制要按住 Shift。
+/// 不想要就在远端执行 `tmux set -g mouse off`。
 pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
-    format!("tmux new -As {} {}", shell_quote(session), shell_quote(agent_cmd))
+    format!(
+        "tmux set -g mouse on; tmux new -As {} {}",
+        shell_quote(session),
+        shell_quote(agent_cmd)
+    )
 }
 
 fn base_argv(target: &SshTarget) -> Vec<String> {
@@ -95,7 +104,7 @@ mod tests {
     fn builds_remote_tmux_cmd() {
         assert_eq!(
             build_remote_tmux_cmd("hermes-proj", "hermes chat"),
-            "tmux new -As 'hermes-proj' 'hermes chat'"
+            "tmux set -g mouse on; tmux new -As 'hermes-proj' 'hermes chat'"
         );
     }
 
@@ -105,7 +114,7 @@ mod tests {
             "ssh",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-t", "ubuntu@example.com",
-            "tmux new -As 'hermes-proj' 'hermes chat'",
+            "tmux set -g mouse on; tmux new -As 'hermes-proj' 'hermes chat'",
         ]);
     }
 
