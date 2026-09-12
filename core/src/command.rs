@@ -56,6 +56,23 @@ pub fn build_probe_argv(target: &SshTarget, session: &str) -> Vec<String> {
     argv
 }
 
+/// 一次性远端命令（非交互）。用于「问一句就回」的场景（目录列表），
+/// 走独立 ssh 进程，不占 PTY 会话、不污染终端输出。
+///
+/// 比 `build_probe_argv` 多两个 `-o`，都是为了让 UI 调用有确定的失败时机：
+/// `ConnectTimeout=10` 防止主机不可达时面板一直转圈；
+/// `BatchMode=yes` 让需要口令的认证直接失败，而不是挂在提示符上。
+pub fn build_exec_argv(target: &SshTarget, cmd: &str) -> Vec<String> {
+    let mut argv = base_argv(target);
+    argv.push("-o".into());
+    argv.push("ConnectTimeout=10".into());
+    argv.push("-o".into());
+    argv.push("BatchMode=yes".into());
+    argv.push(destination(target));
+    argv.push(cmd.to_string());
+    argv
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +125,16 @@ mod tests {
         let argv = build_session_argv(&t, "s", "c");
         assert_eq!(&argv[1..8], &["-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-p", "2222", "-t"]);
         assert_eq!(argv[8], "h");
+    }
+
+    #[test]
+    fn builds_exec_argv_without_tty_and_with_bounded_wait() {
+        assert_eq!(build_exec_argv(&target(), "ls -1"), vec![
+            "ssh",
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+            "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+            "ubuntu@example.com",
+            "ls -1",
+        ]);
     }
 }

@@ -3,6 +3,7 @@ pub mod command;
 pub mod config;
 pub mod discovery;
 pub mod exit;
+pub mod files;
 pub mod keys;
 pub mod reconnect;
 pub mod session;

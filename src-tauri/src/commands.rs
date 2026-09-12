@@ -10,6 +10,7 @@ use session_core::config::{parse_config, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
 };
+use session_core::files::{build_list_cmd, join_path, parse_listing};
 use session_core::session::SessionState;
 
 use crate::runner::{run_session, RunnerMsg};
@@ -298,4 +299,75 @@ pub fn close_session(state: State<AppState>, id: String, kill_remote: bool) -> R
     let guard = state.inputs.lock().unwrap();
     let tx = guard.get(&id).ok_or_else(|| format!("unknown session: {id}"))?;
     tx.send(b"__close".to_vec()).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+pub struct EntryView {
+    pub name: String,
+    /// 绝对路径，前端拖拽时直接拿去插进终端
+    pub path: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+#[derive(Serialize)]
+pub struct DirView {
+    /// 远端 `pwd` 解析出的规范绝对路径（`~` / `..` 都已展开），面包屑用它
+    pub dir: String,
+    pub entries: Vec<EntryView>,
+}
+
+/// 列远端目录。走一次性 ssh（`build_exec_argv`），不占用也不污染任何 PTY 会话。
+///
+/// 必须 `spawn_blocking`：`std::process::Command::output()` 是阻塞调用，
+/// 直接在 async 上下文里跑会卡住整个运行时（面板转圈时连事件都发不出去）。
+///
+/// 返回的 `dir` 是远端解析后的规范路径，前端**不要**自己拼 `~` 或 `..` 的上一级 ——
+/// 想看上一层就再传一次 `<dir>/..`，让远端去解析。
+#[tauri::command]
+pub async fn list_dir(
+    state: State<'_, AppState>,
+    host: String,
+    dir: String,
+) -> Result<DirView, String> {
+    // 锁只在这一小段里持有——MutexGuard 不是 Send，跨 await 会编译不过
+    let target = {
+        let guard = state.config.lock().unwrap();
+        let cfg = guard.as_ref().ok_or("config not loaded")?;
+        cfg.to_ssh_target(&host)
+            .ok_or_else(|| format!("unknown host: {host}"))?
+    };
+
+    let argv = session_core::command::build_exec_argv(&target, &build_list_cmd(&dir));
+
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        std::process::Command::new(&argv[0]).args(&argv[1..]).output()
+    })
+    .await
+    .map_err(|e| format!("列目录任务失败: {e}"))?
+    .map_err(|e| format!("执行 ssh 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let msg = stderr.trim();
+        return Err(if msg.is_empty() {
+            format!("ssh 退出码 {:?}", output.status.code())
+        } else {
+            msg.to_string()
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let listing = parse_listing(&stdout);
+    let entries = listing
+        .entries
+        .into_iter()
+        .map(|e| EntryView {
+            path: join_path(&listing.dir, &e.name),
+            name: e.name,
+            is_dir: e.is_dir,
+            size: e.size,
+        })
+        .collect();
+    Ok(DirView { dir: listing.dir, entries })
 }
