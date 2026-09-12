@@ -10,7 +10,15 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "windows": [{ "title": "Agent Sessions", "width": 1100, "height": 720 }],
+    "windows": [
+      {
+        "title": "Agent Sessions",
+        "width": 1100,
+        "height": 720,
+        "theme": "dark",
+        "backgroundColor": "#0f1117"
+      }
+    ],
     "security": { "csp": null }
   },
   "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.ico"] }
