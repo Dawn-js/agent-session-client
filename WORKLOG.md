@@ -2,6 +2,57 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（首启探测 + 探测与文件面板解耦）
+
+**本次做了什么**
+
+- **修「首次启动没有任何引导，进去就是自动配置，也没探测我的 host」**。根因不是探测功能本身，
+  是探测在首启**结构上就调不到**，三处叠在一起：
+  1. `App.tsx` 的 `useAlias()` 走的是 `knownAgents()`（后端注册表**全集**），从头到尾没调
+     `probeAgents` —— 于是把服务器上根本没装的 agent 写进配置，点它必挂。
+  2. `probe_agents` → `exec_remote` → `cfg.to_ssh_target(host)`，只认**已保存配置里的 host 名**
+     （`SettingsModal.tsx` 的注释原文写明了这条约束）。首启没有配置 → 没有 host 可解析 →
+     探测不可能调到，只能退化成猜。
+  3. 探测还借了文件面板那条长驻 ssh（`state.file_chan`）：`once()` 全程持锁跑 `FileChan::run`
+     （`CMD_TIMEOUT = 30s`，失败还会 `take()` 掉重建再跑一次），既会和文件面板互相等锁，
+     host 不同还会把文件面板的通道直接顶掉。
+- **解耦（core）**：新增 `config::resolve_target(config, host_or_alias)` —— 先在配置里按 `name`
+  查，查不到就把这个字符串当成 ssh 别名原样交给系统 ssh（`~/.ssh/config` 去解释
+  HostName/User/Port）。探测因此不再依赖已保存的配置，首启可用。
+- **解耦（传输）**：新增 `commands::exec_remote_oneshot`（`spawn_blocking` + `Command::output()` +
+  `hide_console`，复用已有的 `build_exec_argv`），`probe_agents` 改走它，不再碰 `state.file_chan`。
+  输出判定抽成 `command::probe_outcome`：有 stdout 就用（避免「最后一个 bin 没装 → 非零退出」
+  把真结果丢掉），`code == 0 && 输出为空` 是**合法答案**「一台都没装」而不是失败。
+- **首启引导（前端）**：`bootstrapConfigJson` 在一个都没探到时返回 `null`，绝不写一份必然被后端
+  校验拒掉的配置；`ConfigErrorPanel` 自己持有探测状态 —— 点别名 → 「正在探测 X…」→ 列出探到的
+  agent → 确认后**只把探到的**写进配置；一个都没探到就说明原因并引导改用手填模板。
+  删掉 `useAlias`（那条猜的路）。
+
+**当前状态**
+
+- `cargo test`：98 passed（core）+ transport shim 4 passed。
+- `cargo check -p agent-session-client`：通过，0 warning。
+- `npm test`：28 passed（`configEdit` 新增「空探测结果返回 null」，替换掉原来那条以
+  「两边列表都非空」为由的测试 —— 那条测试的理由正是本 bug 的成因）。
+- `npm run build`：通过（tsc 严格 + vite）。
+- **未经 Windows 目视确认**：探测中的按钮禁用态、探到的 agent 列表、确认保存后的界面跳转。
+
+**下一步计划**
+
+- 在 Windows 上 `npx tauri dev` 实测首启：把配置移走 → 应出现「选择一台服务器开始」→ 点别名 →
+  看到「正在探测」→ 看到探到的 agent 列表 → 确认后进入主界面，且**只有**探到的 agent。
+- **发版前必须先 bump 版本**（`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` /
+  `Cargo.lock` 四处一起改），否则 push 到 master 会把新产物覆盖到 `v0.2.2` 那个 tag 上 ——
+  v0.2.1 就是这么被污染的。
+
+**踩过的坑**
+
+- **「首启要用的能力」不能依赖「首启时还不存在的东西」**：探测只认已保存配置里的 host 名，
+  而首启恰恰没有配置文件，于是探测结构上就调不到，只能退化成猜。已沉淀为 AGENTS.md ledger 第 16 条。
+- **不要把一次性操作搭在长驻通道上**：借用方会和通道主人互相等锁，换 host 还会把对方的通道顶掉
+  （`once()` 里 `*guard = Some(FileChan::spawn(...))`，旧的 Drop 会 kill 掉 ssh）。要借用之前
+  先想清楚谁阻塞谁。
+
 ## 2026-09-12（关闭会话 + 探测已装 agent）
 
 **本次做了什么**

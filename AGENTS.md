@@ -175,6 +175,14 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     否则重连出来的 PTY 会一直用旧尺寸（前端只在尺寸真正变化时才发 resize，不会补发）。
     阻塞的 `probe_session`（最长 `ConnectTimeout=10s`）返回后也要 `drain_pending` 一次。
 
+16. **「首启要用的能力」不能依赖「首启时还不存在的东西」**：agent 探测原本只认「已保存配置里的
+    host 名」（`probe_agents` → `exec_remote` → `cfg.to_ssh_target`），而首次启动恰恰还没有配置文件
+    —— 于是探测在结构上就调不到，界面只能退化成「把注册表全集猜着写进配置」，用户点没装的 agent 必挂，
+    而且全程没有任何引导。修法：`config::resolve_target` 在配置里查不到就把该字符串当 ssh 别名
+    交给系统 ssh；探测也改走一次性 `exec_remote_oneshot`，不再借文件面板的长驻通道
+    （借用方会和通道主人互相等锁，换 host 还会把对方的通道顶掉）。
+    **加任何首启相关的能力前，先问一句「它依赖配置文件吗」。**
+
 ## 约定
 
 - Conventional Commits（`feat:` / `fix:` / `chore:` / `docs:` / `ci:`），英文小写。
