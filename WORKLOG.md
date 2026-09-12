@@ -2,6 +2,43 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（文件面板通道 / 滚轮 / 主题切换）
+
+**本次做了什么**
+
+- **文件面板复用一条 ssh**：新增 `src-tauri/src/filechan.rs`（长驻 ssh + 一行一命令的协议，
+  远端 `eval` 后以独占一行的 `__END__<退出码>` 分帧），`list_dir` / `list_skills` 改走它。
+  原先每点一次目录都要重走一遍 TCP+SSH 握手——实测端到端 3-5s，其中传数据只有 0.8s。
+- **消除 cmd 弹窗**：`list_dir` / `list_skills` 也补上 `CREATE_NO_WINDOW`
+  （原先只有 runner 里的 ssh 加了，这两个命令是后来才有的）。
+- **滚轮**：`build_remote_tmux_cmd` 前置 `tmux set -g mouse on`。tmux 的 mouse 模式默认是关的，
+  不开的话滚轮事件在 tmux 里不产生任何滚动。
+- **深浅主题切换**：`<html data-theme>` + CSS 变量（组件里不再留硬编码颜色），
+  xterm 配两套 ANSI 配色；换主题时只改 `term.options.theme`，不重建终端，避免丢掉整屏回滚。
+  选择存 localStorage。
+
+**当前状态**
+
+- `cargo test`（62）、`npm test`（14）、`npm run build`、`cargo check -p agent-session-client`
+  全部在 `main` 服务器上跑绿（本机拉不到依赖，见下方踩坑）。
+- **未经 Windows 目视确认**：文件面板提速体感、滚轮是否真能翻历史、浅色主题下终端可读性。
+
+**下一步计划**
+
+- Windows 上实测三件事：滚轮翻 tmux 历史、文件面板是否秒开、浅色主题观感。
+- tmux mouse on 之后鼠标拖拽选择会被 tmux 接管（系统选区需按住 Shift）。
+  不想要就在远端 `tmux set -g mouse off`，代价是滚轮又不能滚——二者只能选一个。
+
+**踩过的坑**
+
+- **ControlMaster 在这台机器上不工作**：master 能起来（`ssh -O check` 报 `Master running`），
+  但每次 session 请求都 `mux_client_request_session: read from master failed: Connection reset by peer`
+  后退回新建连接，三次耗时 2.4s / 3.3s / 3.0s，**与不复用完全一样**。
+  `/tmp/...` 和 Windows Temp 两种 ControlPath 都试过。所以改成自建通道，而不是加三个 `-o`。
+- 本机 `127.0.0.1:7890` 实测连不通，`npm install` / `cargo fetch` 都做不了，验证只能走 `main`（见 ledger 第 14 条）。
+- 改 `build_remote_tmux_cmd` 时有**两个**测试断言了这条命令（`builds_remote_tmux_cmd` 和
+  `builds_session_argv_with_keepalive_and_tty`），只改第一个会漏。
+
 ## 2026-09-12（文件面板 / TUI 修复 / 应用图标）
 
 **本次做了什么**

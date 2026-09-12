@@ -139,6 +139,21 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     npx tauri build 2>&1 | head -12
     ```
 
+13. **远端一次 `ssh` 的固定开销是 3-5s，而其中真正传数据只有 0.8s**（剩下的是进程启动 + TCP/SSH 握手）。
+    文件面板每点一次目录就付一次，这是"切换慢"的根因——不是 `find` 慢，也不是 UI 慢。
+    **ControlMaster 在本机不工作**：master 能起来，但 mux session 一律
+    `read from master failed: Connection reset by peer` 后退回新建连接，耗时和不复用一样。
+    所以文件面板走自建的长驻通道 `src-tauri/src/filechan.rs`（握手一次，之后每次只是一个 RTT），
+    **不要再去尝试给 `build_exec_argv` 加 ControlMaster 那三个 `-o`**。
+
+14. **本机拉不到依赖**：`127.0.0.1:7890` 实测连不通（`static.crates.io` 与 npm registry 都返回 000），
+    `node_modules` 也常被清掉，所以本机既装不了依赖也 fetch 不了 crate。
+    类型检查和测试一律走 `main` 服务器：bundle 同步后跑
+    `PATH=$HOME/.cargo/bin:$PATH cargo test -p session_core`、
+    `cargo check -p agent-session-client`、`npm run build`、`npm test`。
+    注意 **`main` 上的 cargo 不在 PATH 里**（在 `~/.cargo/bin`），且 `cargo check` 在它上面能过
+    （不需要 webkit2gtk，那是 `tauri build` 才要）。
+
     枚举字段一律用**变体名原样**（`"Dark"` 而不是 `"dark"`），别照 `Display` 实现推断。
 
 ## 约定
