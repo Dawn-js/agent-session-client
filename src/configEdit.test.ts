@@ -97,25 +97,28 @@ describe("buildConfigJson", () => {
 });
 
 describe("bootstrapConfigJson", () => {
-  const agents: AgentView[] = [
+  const discovered: AgentView[] = [
     { id: "hermes", label: "Hermes Agent", cmd: "hermes chat" },
-    { id: "dsh", label: "DeepSeek Harness", cmd: "dsh" },
   ];
 
   it("uses the alias as both name and host, leaving ssh to resolve the rest", () => {
-    const parsed = JSON.parse(bootstrapConfigJson("main", agents));
+    const parsed = JSON.parse(bootstrapConfigJson("main", discovered)!);
     expect(parsed.hosts).toEqual([{ name: "main", host: "main" }]);
   });
 
   it("trims the alias", () => {
-    const parsed = JSON.parse(bootstrapConfigJson("  main  ", agents));
+    const parsed = JSON.parse(bootstrapConfigJson("  main  ", discovered)!);
     expect(parsed.hosts[0]).toEqual({ name: "main", host: "main" });
   });
 
-  it("carries the registry agents verbatim so both lists are non-empty", () => {
-    const parsed = JSON.parse(bootstrapConfigJson("main", agents));
-    expect(parsed.agents).toEqual(agents);
-    expect(parsed.hosts).toHaveLength(1);
-    expect(parsed.agents.length).toBeGreaterThan(0);
+  it("writes only the agents actually discovered on that host", () => {
+    const parsed = JSON.parse(bootstrapConfigJson("main", discovered)!);
+    expect(parsed.agents).toEqual(discovered);
+  });
+
+  it("returns null when nothing was discovered", () => {
+    // 后端校验要求 agents 非空，写一份必然被拒的配置只会把用户送进
+    // 一个点了就报错的界面。宁可什么都不写，让界面提示改用手填模板。
+    expect(bootstrapConfigJson("main", [])).toBeNull();
   });
 });

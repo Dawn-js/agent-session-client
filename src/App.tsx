@@ -8,11 +8,12 @@ import { SettingsModal } from "./SettingsModal";
 import { applyState, removeSession, STATE_META, type Session, type SessionState } from "./sessions";
 import {
   isConfigError,
-  knownAgents,
   listSshHosts,
   loadConfig,
+  probeAgents,
   saveConfig,
   writeExampleConfig,
+  type AgentView,
   type ConfigError,
   type ConfigView,
   type SshHostView,
@@ -182,20 +183,10 @@ export default function App() {
   };
 
   /**
-   * 用本机 ssh 别名生成初始配置：host 直接写别名，连接时由系统 ssh 去读
-   * `~/.ssh/config`，所以不需要在这里填地址。agent 取后端注册表全集。
+   * 首次启动的探测与确认流程都在 `ConfigErrorPanel` 里 —— 它天然持有
+   * 「当前这台选中的别名 + 探测状态」，放在那里不用把状态提上来。
+   * 这里只提供保存后重新加载。
    */
-  const useAlias = async (alias: string) => {
-    setActionError(null);
-    try {
-      const agents = await knownAgents();
-      await saveConfig(bootstrapConfigJson(alias, agents));
-      await reload();
-    } catch (error) {
-      setActionError(String(error));
-    }
-  };
-
   return (
     <div className="app">
       <aside className="sidebar">
@@ -261,7 +252,6 @@ export default function App() {
             <ConfigErrorPanel
               error={configError}
               sshHosts={sshHosts}
-              onUseAlias={useAlias}
               onGenerate={generateConfig}
               onReload={reload}
             />
@@ -371,20 +361,58 @@ function describeSshHost(h: SshHostView): string {
 function ConfigErrorPanel({
   error,
   sshHosts,
-  onUseAlias,
   onGenerate,
   onReload,
 }: {
   error: ConfigError;
   sshHosts: SshHostView[];
-  onUseAlias: (alias: string) => void;
   onGenerate: () => void;
   onReload: () => void;
 }) {
+  // 首次启动引导：选中别名后**先探测**那台机器装了哪些 agent，把结果摆出来让
+  // 用户确认，只把探到的写进配置。以前这里直接写注册表全集，用户点进去看到的
+  // 是一堆服务器上根本没装的 agent（点了必挂），而且全程没有任何探测和引导。
+  const [probingAlias, setProbingAlias] = useState<string | null>(null);
+  const [result, setResult] = useState<{ alias: string; agents: AgentView[] } | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const probe = async (alias: string) => {
+    setProbingAlias(alias);
+    setResult(null);
+    setProbeError(null);
+    try {
+      setResult({ alias, agents: await probeAgents(alias) });
+    } catch (e) {
+      setProbeError(String(e));
+    } finally {
+      setProbingAlias(null);
+    }
+  };
+
+  const confirm = async () => {
+    if (!result) return;
+    const json = bootstrapConfigJson(result.alias, result.agents);
+    if (!json) return; // 一个都没探到：按钮本来就不给点，这里兜底
+    setSaving(true);
+    setProbeError(null);
+    try {
+      await saveConfig(json);
+      onReload();
+    } catch (e) {
+      setProbeError(String(e));
+    } finally {
+      // 保存后 reload 可能又回到「未找到配置」这个分支，不在这里解锁按钮
+      // 就会永久卡在 disabled 上
+      setSaving(false);
+    }
+  };
+
   if (error.kind === "not_found") {
     // 本机 ssh config 里已经有服务器可用时，直接列出来一键起会话 —— 比让用户
     // 面对一屏 REPLACE_WITH_* 占位符强得多。
     const canImport = sshHosts.length > 0;
+    const busy = probingAlias !== null || saving;
     return (
       <div className="config-error">
         <p className="error-title">
@@ -393,7 +421,8 @@ function ConfigErrorPanel({
         {canImport && (
           <>
             <p className="muted">
-              检测到本机 <code>~/.ssh/config</code> 里的主机，点一个直接用它：
+              检测到本机 <code>~/.ssh/config</code> 里的主机，点一个会先去探测那台
+              机器上装了哪些 agent：
             </p>
             <div className="row">
               {sshHosts.map((h) => (
@@ -401,12 +430,61 @@ function ConfigErrorPanel({
                   key={h.alias}
                   className="primary"
                   title={describeSshHost(h)}
-                  onClick={() => void onUseAlias(h.alias)}
+                  disabled={busy}
+                  onClick={() => void probe(h.alias)}
                 >
-                  用 {h.alias} 开始
+                  {probingAlias === h.alias ? `探测 ${h.alias} 中…` : `用 ${h.alias} 开始`}
                 </button>
               ))}
             </div>
+
+            {probingAlias && (
+              <p className="muted">
+                正在探测 {probingAlias}…（没装 agent 或连不上都要等几秒）
+              </p>
+            )}
+
+            {probeError && <p className="error">探测失败：{probeError}</p>}
+
+            {result && result.agents.length > 0 && (
+              <>
+                <p className="muted">
+                  在 <code>{result.alias}</code> 上找到这些 agent，确认后写进配置：
+                </p>
+                <div className="row">
+                  {result.agents.map((a) => (
+                    <span className="agent-head" key={a.id}>
+                      <AgentIcon agent={a.id} size={18} />
+                      {a.label}
+                    </span>
+                  ))}
+                </div>
+                <div className="row">
+                  <button className="primary" disabled={saving} onClick={() => void confirm()}>
+                    {saving ? "保存中…" : `用这几个开始（${result.agents.length}）`}
+                  </button>
+                  <button disabled={saving} onClick={() => setResult(null)}>
+                    换一台
+                  </button>
+                </div>
+              </>
+            )}
+
+            {result && result.agents.length === 0 && (
+              <>
+                <p className="error">
+                  <code>{result.alias}</code> 上没有探测到已知 agent。
+                </p>
+                <p className="muted">
+                  可能是那台机器确实没装，也可能是连不上（探测走的是一次性 ssh，
+                  只认免密登录）。换一台，或者在下面生成模板自己填。
+                </p>
+                <div className="row">
+                  <button onClick={() => setResult(null)}>换一台</button>
+                </div>
+              </>
+            )}
+
             <p className="muted">
               没有你要的？也可以生成一份模板自己填（生成后会自动打开编辑面板）。
             </p>

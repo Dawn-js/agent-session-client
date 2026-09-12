@@ -78,10 +78,18 @@ export function buildConfigJson(hosts: EditableHost[], agents: EditableAgent[]):
 }
 
 /**
- * 首次启动时，用一个本机 ssh 别名生成最小可用配置：host 直接取别名本身、
- * `user` 留空 —— 连接时 ssh 会自己去 `~/.ssh/config` 解释 HostName/User/Port。
- * agent 取后端注册表全集，这样 hosts/agents 都非空、必然过后端校验。
+ * 首次启动时，用一个本机 ssh 别名 + **该主机上实际探测到的** agent 生成初始配置。
+ * host 直接取别名本身、`user` 留空 —— 连接时 ssh 会自己去 `~/.ssh/config`
+ * 解释 HostName/User/Port。
+ *
+ * 一个 agent 都没探到就返回 `null`：后端校验要求 `agents` 非空，写一份必然被拒的
+ * 配置只会把用户送进一个点了就报错的界面。绝对不要退回「把注册表全集写进去」——
+ * 那会在没装该 agent 的服务器上留下一个点了必挂的按钮，也无法经过配置校验。
  */
-export function bootstrapConfigJson(alias: string, agents: AgentView[]): string {
-  return buildConfigJson([{ name: alias, host: alias, user: "", extra: "" }], agents);
+export function bootstrapConfigJson(
+  alias: string,
+  discovered: AgentView[],
+): string | null {
+  if (discovered.length === 0) return null;
+  return buildConfigJson([{ name: alias, host: alias, user: "", extra: "" }], discovered);
 }
