@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(commands::AppState {
             config: Mutex::new(None),
             inputs: Arc::new(Mutex::new(HashMap::new())),
@@ -26,6 +26,16 @@ fn main() {
             commands::list_dir,
             commands::list_skills,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        // 退出时关掉文件面板那条常驻 ssh：进程退出不会替我们收子进程，
+        // 不 kill 它就会留在后台（ledger 第 2 条：ssh 必须显式 kill + wait）。
+        if let tauri::RunEvent::Exit = event {
+            if let Some(state) = app.try_state::<commands::AppState>() {
+                state.file_chan.lock().unwrap().take();
+            }
+        }
+    });
 }

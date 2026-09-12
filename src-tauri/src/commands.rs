@@ -177,6 +177,8 @@ pub fn load_config(
                 searched: display_paths(&candidates),
             };
             *state.config.lock().unwrap() = Some(config);
+            // 同 save_config：换了配置就让长驻通道按新的 target 重建
+            state.file_chan.lock().unwrap().take();
             Ok(view)
         }
         LoadOutcome::NotFound { .. } => Err(ConfigError::NotFound {
@@ -241,6 +243,8 @@ pub fn save_config(
     let text = serde_json::to_string_pretty(&cfg).map_err(|e| fail(e.to_string()))?;
     std::fs::write(&path, text + "\n").map_err(|e| fail(format!("写入失败: {e}")))?;
     *state.config.lock().unwrap() = Some(cfg);
+    // host / key 可能变了，长驻通道握的是旧 target，丢掉让它按需重建
+    state.file_chan.lock().unwrap().take();
     Ok(path.display().to_string())
 }
 
