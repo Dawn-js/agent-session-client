@@ -35,7 +35,11 @@
   但每次 session 请求都 `mux_client_request_session: read from master failed: Connection reset by peer`
   后退回新建连接，三次耗时 2.4s / 3.3s / 3.0s，**与不复用完全一样**。
   `/tmp/...` 和 Windows Temp 两种 ControlPath 都试过。所以改成自建通道，而不是加三个 `-o`。
-- 本机 `127.0.0.1:7890` 实测连不通，`npm install` / `cargo fetch` 都做不了，验证只能走 `main`（见 ledger 第 14 条）。
+- **我把"本机跑不了"归错了因（已更正，见 ledger 第 14 条）**：先是看到 7890 不通就断定"本机拉不到依赖"，
+  实际是客户端换了端口（现在 7897）、且 WorkBuddy 会话会注入 `http_proxy=127.0.0.1:50261` 覆盖掉设置。
+  摘掉代理变量后本机 `npm install`（173 包）/ `npm run build` / `npm test` 全部正常。
+  真正的限制只有一条：沙箱内 **curl 和 cargo（libcurl 系）的下载被截断**（HTTP 200 但 0 字节），
+  所以 Rust 侧仍走 `main` 验证。**教训：只测一个端口就下结论，差点把错误结论写死在文档里。**
 - 改 `build_remote_tmux_cmd` 时有**两个**测试断言了这条命令（`builds_remote_tmux_cmd` 和
   `builds_session_argv_with_keepalive_and_tty`），只改第一个会漏。
 

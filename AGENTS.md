@@ -139,6 +139,8 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     npx tauri build 2>&1 | head -12
     ```
 
+    枚举字段一律用**变体名原样**（`"Dark"` 而不是 `"dark"`），别照 `Display` 实现推断。
+
 13. **远端一次 `ssh` 的固定开销是 3-5s，而其中真正传数据只有 0.8s**（剩下的是进程启动 + TCP/SSH 握手）。
     文件面板每点一次目录就付一次，这是"切换慢"的根因——不是 `find` 慢，也不是 UI 慢。
     **ControlMaster 在本机不工作**：master 能起来，但 mux session 一律
@@ -146,15 +148,20 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     所以文件面板走自建的长驻通道 `src-tauri/src/filechan.rs`（握手一次，之后每次只是一个 RTT），
     **不要再去尝试给 `build_exec_argv` 加 ControlMaster 那三个 `-o`**。
 
-14. **本机拉不到依赖**：`127.0.0.1:7890` 实测连不通（`static.crates.io` 与 npm registry 都返回 000），
-    `node_modules` 也常被清掉，所以本机既装不了依赖也 fetch 不了 crate。
-    类型检查和测试一律走 `main` 服务器：bundle 同步后跑
-    `PATH=$HOME/.cargo/bin:$PATH cargo test -p session_core`、
-    `cargo check -p agent-session-client`、`npm run build`、`npm test`。
-    注意 **`main` 上的 cargo 不在 PATH 里**（在 `~/.cargo/bin`），且 `cargo check` 在它上面能过
-    （不需要 webkit2gtk，那是 `tauri build` 才要）。
+14. **本机网络是好的，卡住的是沙箱里的 libcurl**（2026-09-12 复核；此前归错过因，以这版为准）：
 
-    枚举字段一律用**变体名原样**（`"Dark"` 而不是 `"dark"`），别照 `Display` 实现推断。
+    - TUN 模式常开（网卡 `198.18.0.2`），直连 `static.crates.io` / `registry.npmjs.org` 都是 200。
+      客户端换过，**代理端口现在是 `7897`**，旧的 `7890` 已不监听。
+      `git config --global` 里的 `http.proxy` 仍指向 `7890`，是遗留的失效配置。
+    - WorkBuddy 会话会注入 `http_proxy=http://127.0.0.1:50261`，**覆盖**用户自己的代理设置。
+      跑 npm / cargo 时用 `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY` 摘掉。
+    - 沙箱内 **curl 与 cargo（同为 libcurl）的下载会被截断**：返回 `HTTP 200` 但 `size_download=0`，
+      cargo 的表现是 `transfer too slow: transferred 0 bytes`。
+      **npm 不受影响**——实测本机 `npm install` 装了 173 个包，`npm run build` / `npm test` 均通过。
+    - 所以：**前端验证可以在本机做**；Rust 的 `cargo` 仍走 `main` 服务器（bundle 同步后
+      `PATH=$HOME/.cargo/bin:$PATH cargo test -p session_core` + `cargo check -p agent-session-client`；
+      **`main` 上的 cargo 不在 PATH 里**，在 `~/.cargo/bin`；`cargo check` 在它上面能过，
+      不需要 webkit2gtk——那是 `tauri build` 才要）。
 
 ## 约定
 
