@@ -2,6 +2,26 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（滚轮二次修复）
+
+**本次做了什么**
+
+- 用户反馈上一版滚轮仍无效。根因确认：只执行 `tmux set -g mouse on` 不够；已有 tmux 会话可能在 session 级别保留 `mouse off`，覆盖全局选项。
+- `build_remote_tmux_cmd` 现在先执行 `tmux set -g mouse on`，再执行 `tmux set -t '<session>' mouse on 2>/dev/null`，最后 `tmux new -As ...`。
+  这样已有会话和新建会话都能开启 mouse；新建时 session 不存在，定向设置失败会被忽略，不影响后续创建。
+- 在 main 上做了真实 tmux 验证：先把目标会话设为 `mouse off`，再执行新命令，`tmux show-options -t <session> -v mouse` 返回 `on`。
+
+**验证**
+
+- `cargo test -p session_core`：62 passed + transport shim 4 passed。
+- `cargo check -p agent-session-client`：通过。
+- `npm run build`：通过。
+- `npm test`：19 passed。
+
+**下一步**
+
+- 推送并生成新版 Windows 安装包，用户验证已有会话滚轮。
+
 ## 2026-09-12（终端选中复制）
 
 **本次做了什么**
