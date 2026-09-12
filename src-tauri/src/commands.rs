@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use session_core::agents::{build_probe_agents_cmd, parse_probe_agents_output};
+use session_core::agents::{build_probe_agents_cmd, parse_probe_agents_output, KNOWN_AGENTS};
 use session_core::config::{parse_config, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
@@ -14,6 +14,7 @@ use session_core::discovery::{
 use session_core::files::{build_list_cmd, build_skills_cmd, join_path, parse_listing, parse_skills_output};
 use session_core::reconnect::CLOSE_FRAME;
 use session_core::session::SessionState;
+use session_core::ssh_config::parse_ssh_config;
 
 use crate::filechan::FileChan;
 use crate::runner::{run_session, RunnerMsg};
@@ -39,6 +40,19 @@ pub struct ConfigView {
     pub agents: Vec<AgentView>,
     pub source_path: String,
     pub searched: Vec<String>,
+}
+
+/// 本机 `~/.ssh/config` 里发现的一个 `Host` 别名。
+///
+/// `host_name`/`user`/`port`/`proxy_jump` 仅供界面展示（按钮 tooltip）；
+/// 真正连的是 `alias` 本身，由系统 ssh 去解释 —— 见 `session_core::ssh_config`。
+#[derive(Serialize)]
+pub struct SshHostView {
+    pub alias: String,
+    pub host_name: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub proxy_jump: Option<String>,
 }
 
 /// Structured config-load failure so the UI can react (and guide the user)
@@ -134,6 +148,7 @@ fn config_candidates(app: &AppHandle, override_path: Option<&str>) -> Vec<PathBu
     {
         candidates.push(dir.join("config.json"));
     }
+    // TEMP: 待 commit 4 恢复
     for dir in [exe_dir.as_deref(), cwd.as_deref()].into_iter().flatten() {
         candidates.push(dir.join("examples").join("config.example.json"));
     }
@@ -448,4 +463,54 @@ pub async fn probe_agents(
             cmd: a.cmd.to_string(),
         })
         .collect())
+}
+
+/// 本机 ssh 客户端配置的路径（Windows 上即 `%USERPROFILE%\.ssh\config`）。
+///
+/// 用 Tauri 的 `home_dir()`（内部已封装 `dirs::home_dir`），不为这一处引入 `dirs` crate。
+fn ssh_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("无法解析用户主目录: {e}"))?;
+    Ok(home.join(".ssh").join("config"))
+}
+
+/// 列出本机 `~/.ssh/config` 里的 `Host` 别名，供首次启动时一键导入。
+///
+/// 文件不存在（或 `~/.ssh` 不存在）返回空列表而不是报错 —— 「没配过 ssh config」
+/// 是正常情况，不该让客户端起不来；真正读取失败才报错。
+#[tauri::command]
+pub fn list_ssh_hosts(app: AppHandle) -> Result<Vec<SshHostView>, String> {
+    let path = ssh_config_path(&app)?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+    Ok(parse_ssh_config(&text)
+        .into_iter()
+        .map(|h| SshHostView {
+            alias: h.alias,
+            host_name: h.host_name,
+            user: h.user,
+            port: h.port,
+            proxy_jump: h.proxy_jump,
+        })
+        .collect())
+}
+
+/// 注册表里的已知 agent 模板，供首次启动生成初始配置。
+///
+/// 从前端调用而不是在 TS 里硬编码，保证与 `probe_agents` 共用同一份事实源。
+#[tauri::command]
+pub fn known_agents() -> Vec<AgentView> {
+    KNOWN_AGENTS
+        .iter()
+        .map(|a| AgentView {
+            id: a.id.to_string(),
+            label: a.label.to_string(),
+            cmd: a.cmd.to_string(),
+        })
+        .collect()
 }

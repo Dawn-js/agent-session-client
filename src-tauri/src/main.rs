@@ -29,6 +29,8 @@ fn main() {
             commands::list_dir,
             commands::list_skills,
             commands::probe_agents,
+            commands::list_ssh_hosts,
+            commands::known_agents,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

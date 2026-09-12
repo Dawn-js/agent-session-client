@@ -20,6 +20,20 @@ export interface ConfigView {
   searched: string[];
 }
 
+/**
+ * A `Host` alias found in this machine's own `~/.ssh/config`.
+ *
+ * Only `alias` is used to connect (the system ssh resolves the rest); the other
+ * fields are display-only metadata for the first-run picker.
+ */
+export interface SshHostView {
+  alias: string;
+  host_name: string | null;
+  user: string | null;
+  port: number | null;
+  proxy_jump: string | null;
+}
+
 /** Structured config-load failure returned by the Rust `load_config` command. */
 export type ConfigError =
   | { kind: "not_found"; searched: string[] }
@@ -64,4 +78,18 @@ export async function probeAgents(host: string): Promise<AgentView[]> {
  */
 export async function saveConfig(json: string): Promise<string> {
   return invoke<string>("save_config", { json });
+}
+
+/**
+ * List `Host` aliases from this machine's `~/.ssh/config`, so the first run can
+ * offer servers the user already has instead of a form to fill in.
+ * An empty list (no ssh config) is a normal result, not an error.
+ */
+export async function listSshHosts(): Promise<SshHostView[]> {
+  return invoke<SshHostView[]>("list_ssh_hosts");
+}
+
+/** Known agent templates from the backend registry — the same source `probe_agents` uses. */
+export async function knownAgents(): Promise<AgentView[]> {
+  return invoke<AgentView[]>("known_agents");
 }
