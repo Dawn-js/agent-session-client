@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "./Terminal";
 import { AgentIcon } from "./icons";
+import { FilePanel } from "./FilePanel";
 import { SettingsModal } from "./SettingsModal";
 import { applyState, STATE_META, type Session, type SessionState } from "./sessions";
 import {
@@ -22,6 +23,9 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  // 会话 id -> host。文件面板要知道当前会话连的是哪台机器，
+  // 但 id 是按 agent 命名的（见 start_session），host 只能在这里记下来。
+  const [hostOf, setHostOf] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const writerRef = useRef<((d: string) => void) | null>(null);
@@ -93,6 +97,7 @@ export default function App() {
     setActionError(null);
     try {
       const id = await invoke<string>("start_session", { host, agent, project: "" });
+      setHostOf((prev) => ({ ...prev, [id]: host }));
       setSessions((prev) => applyState(prev, id, "connecting"));
       setActive(id);
     } catch (error) {
@@ -219,6 +224,8 @@ export default function App() {
           </div>
         )}
       </main>
+
+      <FilePanel host={active ? hostOf[active] ?? null : null} />
 
       {settingsOpen && config && (
         <SettingsModal

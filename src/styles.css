@@ -549,6 +549,129 @@ code {
   border-top: 1px solid var(--border);
 }
 
+/* ---------- 服务器文件面板 ---------- */
+
+.files {
+  width: 260px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.files-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.files-cwd {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  /* 路径太长时从左边截断，保住末尾的目录名 */
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-icon-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.files-icon-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.files-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.files-msg {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 2px 0;
+}
+
+.files-list {
+  flex: 1;
+  min-height: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.files-list.is-loading {
+  opacity: 0.55;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+}
+
+.file-row:hover {
+  background: var(--bg-elevated);
+}
+
+.file-row.is-dir {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.file-row.is-dir .file-name::after {
+  content: "/";
+  color: var(--text-muted);
+}
+
+.file-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-size {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* ---------- scrollbars ---------- */
 
 ::-webkit-scrollbar {
