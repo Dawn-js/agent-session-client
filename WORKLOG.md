@@ -2,6 +2,56 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（首启流程真机验证 + 修「会话找不到 agent」）
+
+**本次做了什么**
+
+- **在本机把 GUI 真跑起来做了目视验证** —— 推翻了「本机没有 webkit2gtk」的旧判断
+  （`webkit2gtk-4.1` 是装着的）。方法已写进 AGENTS.md「开发环境 A」：Xvfb + ffmpeg x11grab
+  截图 + ctypes 调 libXtst 点击，零安装。从此**不用每次都等 Windows 目视确认**。
+- **首启流程全链路验证通过**（截图逐帧确认）：无配置 → 「选择一台服务器开始」列出
+  `~/.ssh/config` 里的别名 → 点别名 → 探测 → 列出探到的 agent → 确认 → 配置落盘 →
+  进主界面且只有探到的 agent。落盘位置是 `~/.config/dev.local.agent-session-client/config.json`
+  （dev 构建的 identifier 带 `dev.local.` 前缀，别去 `~/.config/agent-session-client` 找）。
+  内容核对过：只有点过的 host、只有探到的两个 agent。错误路径也验了（探测 github.com，
+  GitHub sshd 的拒绝信息原样显示）。
+- 顺手修 `.row` 不换行导致别名按钮溢出侧栏（`1334e64`）。
+- **修根因「会话里找不到 agent」**：非交互 ssh 的 PATH 不含 `~/.local/bin`（agent 就装在那），
+  而 tmux 新建会话继承的是**客户端**环境，不是 server 全局环境 —— 所以
+  `tmux new -As s 'hermes chat'` 会 `command not found`（EXIT=127），会话瞬间消失。
+  新增 `command::login_shell`，**会话和探测两处一起**套登录 shell（只改一边就会
+  「探测说没装、会话其实能跑」）。实测：套上之后 `hermes` 能解析到
+  `/home/ubuntu/.local/bin/hermes`，`dsh` 也能执行了。
+- 之前 `hermes` 按钮"能用"是假象：tmux 上已有一个手动从登录 shell 建的 `hermes` 会话，
+  `tmux new -As` 在会话已存在时只是 attach、命令根本不执行。
+
+**当前状态**
+
+- `cargo test`：99 passed（core）+ transport shim 4 passed。
+- `cargo check -p agent-session-client`：通过，0 warning。
+- `npm test`：28 passed。`npm run build`：通过。
+- master HEAD 含未推送提交（见 git log）。
+
+**下一步计划**
+
+- **`dsh` 的注册表启动命令不完整**：登录 shell 修好后 `dsh` 能执行了，但报
+  `error: --profile <name> is required`。`agents.rs` 里写的 `"dsh"` 需要真实参数
+  （或让用户在配置里自己填）。`hermes chat` 的端到端没测（不想为验证多起一个真 agent），
+  PATH 解析已单独验证过。
+- 文件面板的长驻通道（`filechan`）**仍是**非交互 PATH。目前它只跑 `ls`/`find`/`cat`
+  （都在 `/usr/bin`）所以没事，但以后若要在文件面板命令里用到 `~/.local/bin` 的东西，
+  会踩同一个坑 —— AGENTS.md ledger 第 17 条已记。
+- 版本还在 0.2.3；下次发版前记得四处一起 bump（这次改动含用户可见行为，值得发一版）。
+
+**踩过的坑**
+
+- `pkill -f "Xvfb :99"` 会匹配到自己命令行把父 shell 一起杀掉（表现为后台任务秒挂、
+  输出全空）。要用 `pkill -x Xvfb`。已记入 AGENTS.md 开发环境一节。
+- **在交互终端里测远端命令是骗人的**：`command -v hermes` 在交互 shell 里找得到、
+  在 app 的非交互 ssh 里找不到。判断 app 里能不能跑，用
+  `ssh -o BatchMode=yes <host> '<命令>'` 复现。已记入 AGENTS.md ledger 第 17 条。
+- 验证 UI 交互不需要 xdotool：`libXtst.so.6` + python ctypes 十行就够（见 AGENTS.md）。
+
 ## 2026-09-12（首启探测 + 探测与文件面板解耦）
 
 **本次做了什么**

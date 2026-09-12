@@ -31,7 +31,12 @@ Windows 桌面客户端（Tauri 2 + React + xterm.js），把远端 Linux 服务
 **A. 验证机 — headless Linux aarch64 服务器**（用户的 `main` 服务器，仓库在 `~/agent-session-client`）
 
 - Rust 工具链经 rustup 安装，**非交互 shell 需要 `export PATH="$HOME/.cargo/bin:$PATH"`**。
-- **没有 webkit2gtk，本机不能构建/运行 Tauri GUI**——GUI 构建只在 GitHub Actions（windows-latest）。不要尝试在本地装 GUI 依赖。
+- **GUI 可以在本机构建并运行**（2026-09-12 实测推翻了早先「没有 webkit2gtk」的判断 ——
+  `webkit2gtk-4.1` 是装着的）。headless 目视验证流程：`Xvfb :99 -screen 0 1400x1000x24 &` →
+  `DISPLAY=:99 npx tauri dev`（编译约 30s）→ 截图 `ffmpeg -f x11grab -video_size WxH -i :99
+  -frames:v 1 out.png` 后直接看图；点击用 **ctypes 调 libXtst**（`libXtst.so.6` 在，写个十行
+  脚本即可，无需 xdotool）。Vite 热重载对 CSS 生效，改完直接再截一张。
+  ⚠️ `pkill -f "Xvfb :99"` 会匹配到自己命令行把父 shell 一起杀掉，要用 `pkill -x Xvfb`。
 - Node 24 + npm，前端依赖已装（`node_modules` 在）。
 - `cargo check -p agent-session-client` **能过**（见「常用命令」）。
 
@@ -74,8 +79,8 @@ npm ci                # 安装前端依赖
 cargo test            # core + src-tauri 全部单测/集成测试（提交前必跑）
 npm test              # vitest（前端纯函数单测，提交前必跑）
 npm run build         # tsc 严格模式 + vite build（提交前必跑）
-npx tauri dev         # 开发模式运行 GUI（仅 Windows/有 webkit2gtk 的机器）
-npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器）
+npx tauri dev         # 开发模式运行 GUI（本机配 Xvfb 可跑，见「开发环境 A」；Windows 直接跑）
+npx tauri build       # 打包发布版（Linux 上会停在缺打包后端，属预期；Windows/CI 出安装包）
 ```
 
 `cargo test` 覆盖 `core`；`src-tauri` 单独用 `cargo check -p agent-session-client` 验证（A 机器上能过，0 warning 是基线）。
@@ -182,6 +187,17 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     交给系统 ssh；探测也改走一次性 `exec_remote_oneshot`，不再借文件面板的长驻通道
     （借用方会和通道主人互相等锁，换 host 还会把对方的通道顶掉）。
     **加任何首启相关的能力前，先问一句「它依赖配置文件吗」。**
+
+17. **非交互 ssh 的 PATH 不含 `~/.local/bin`，而 agent 就装在那**。app 发的每条远端命令
+    （会话、探测、一次性 exec）都是非交互形状，PATH 是 `/usr/local/sbin:...:/snap/bin`；
+    `~/.local/bin` 由 `~/.profile` / `~/.bashrc` 加进去，两条路都读不到。更隐蔽的是
+    **tmux 新建会话继承的是客户端环境，不是 server 的全局环境**（全局那个是有
+    `~/.local/bin` 的，容易误判成没事）。实测：`tmux new -d -s x 'dsh'` →
+    `command not found`、EXIT=127，且 `remain-on-exit` 默认 off，会话**立刻消失**，
+    看起来就像"什么都没发生"。修法是 `command::login_shell` —— 会话和探测**必须
+    一起**套同一个登录 shell，只改一边就会出现「探测说没装、会话其实能跑」。
+    判断某个远端命令在 app 里能不能跑，**别在交互终端里试**，用
+    `ssh -o BatchMode=yes <host> '<命令>'` 复现 app 的环境。
 
 ## 约定
 
