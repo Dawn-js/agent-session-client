@@ -7,6 +7,9 @@ mod runner;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+// `app.state()` 是 Manager trait 的方法，trait 必须在作用域内
+use tauri::Manager;
+
 fn main() {
     let app = tauri::Builder::default()
         .manage(commands::AppState {
