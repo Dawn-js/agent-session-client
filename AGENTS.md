@@ -16,6 +16,8 @@ Windows 桌面客户端（Tauri 2 + React + xterm.js），把远端 Linux 服务
 - **客户端不缓存 agent 输出，服务端 tmux 是唯一事实源** — 不解析输出、不做聊天 UI。
 - **Transport = 系统 `ssh` 经本地 PTY**，重连 = 重新执行 `tmux new -As <session>`；keepalive `ServerAliveInterval=15` / `ServerAliveCountMax=3`。
 - **文件面板走独立的「一次性 ssh exec」**（`command::build_exec_argv`），不经 PTY 会话——列目录不占用、也不污染正在跑的 agent 终端。它**只读**，不做上传/下载；拖拽只是把远端路径写进 PTY，不是传文件。
+- **技能页签同样走一次性 ssh**，按约定去 `~/.<agent id>/skills` 找，用 `SKILL.md` 作为 skill 的唯一标识
+  （层级不固定，有单层也有 `<category>/<name>` 双层，不能假设深度）。认不出的 agent 返回空列表而不是报错。
 - **非目标别加**：输出解析、agent 状态感知、多机看板、Mosh/ET、服务端自研组件。
 
 ## 开发环境（两台机器，别搞混）
@@ -111,6 +113,11 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
     CSS 变量名，`npx tauri icon` 直接 panic（`InvalidComment`），且**报错位置指向注释开头**，容易找错地方。
     另外 `tauri icon` 会顺带生成 `android/` `ios/` 目录，本项目只出 Windows 包，记得删。
 
+11. **`shell_quote` 会阻止 `~` 展开**：它把路径整个塞进单引号，`cd '~'` 于是去找一个**字面名叫 `~` 的目录**，
+    报 `bash: line 1: cd: ~: No such file or directory`。`~` 必须换成 `$HOME` 并放在引号**外面**
+    （shell 里 `$HOME'/x'` 是合法的词拼接）。见 `files::quote_dir`——**以后凡是把路径拼进远端命令，
+    都要走它而不是直接 `shell_quote`**。
+
 ## 约定
 
 - Conventional Commits（`feat:` / `fix:` / `chore:` / `docs:` / `ci:`），英文小写。
@@ -121,7 +128,7 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
 
 - 版本 `0.2.0`，分支 `master`。
 - 2026-09-12 新增：应用内配置编辑 + 设置面板（`5836d6c`）、服务器文件面板、拖拽插入远端路径、
-  右键粘贴、终端字体与 ANSI 配色、应用图标。
+  右键粘贴、终端字体与 ANSI 配色、应用图标、文件面板的「技能」页签（列 agent 已装 skill）。
   **界面效果未经 Windows 目视确认**，需要 `npx tauri dev` 看过才算完。
 - CI：push 到 `master` 或手动 dispatch 触发 Windows 构建，产物发 GitHub Releases（当前 `v0.2.0`）。
 - `examples/config.example.json` 里 `REPLACE_WITH_*` 占位符由用户填真实值（host、agent 启动命令）。
