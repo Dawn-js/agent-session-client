@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    Agent Sessions 应用图标源文件。
+    用 `npx tauri icon src-tauri/app-icon.svg` 生成全平台尺寸。
+    设计：两个节点 + 一条连线，表示本地窗口与远端 tmux 会话之间的持久连接。
+    配色取自 src/styles.css 的 accent(#5b8cff) / bg-panel(#171a23) / bg-elevated(#1e2230)。
+    注意：XML 注释里不能出现连续两个连字符，所以这里不写 CSS 变量名。
+  -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#242a3b"/>
+      <stop offset="1" stop-color="#14171f"/>
+    </linearGradient>
+    <linearGradient id="link" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4a76f0"/>
+      <stop offset="0.5" stop-color="#7aa2ff"/>
+      <stop offset="1" stop-color="#4a76f0"/>
+    </linearGradient>
+    <linearGradient id="node" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7aa2ff"/>
+      <stop offset="1" stop-color="#4a76f0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底板 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" fill="url(#plate)"/>
+  <rect x="1.5" y="1.5" width="1021" height="1021" rx="226.5"
+        fill="none" stroke="#39405a" stroke-width="3"/>
+
+  <!-- 连线：比节点略窄，让两端看得出是"接入点" -->
+  <rect x="300" y="484" width="424" height="56" rx="28" fill="url(#link)"/>
+
+  <!-- 两个节点 -->
+  <circle cx="300" cy="512" r="124" fill="url(#node)"/>
+  <circle cx="724" cy="512" r="124" fill="url(#node)"/>
+
+  <!-- 节点内环：深色，小尺寸下收成实心圆，不影响可读性 -->
+  <circle cx="300" cy="512" r="52" fill="#171a23"/>
+  <circle cx="724" cy="512" r="52" fill="#171a23"/>
+</svg>
