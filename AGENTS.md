@@ -105,10 +105,11 @@ npx tauri build       # 打包发布版（仅 Windows/有 webkit2gtk 的机器�
 - CI：push 到 `master` 或手动 dispatch 触发 Windows 构建，产物发 GitHub Releases（当前 `v0.2.0`）。
 - `examples/config.example.json` 里 `REPLACE_WITH_*` 占位符由用户填真实值（host、agent 启动命令）。
 - 遗留：
-  - **远端默认分支是 `feat/core`，且已落后 `master` 多个提交**——新机器 clone 会报
-    `remote HEAD refers to nonexistent ref` 且**不检出任何文件**。需在 GitHub 仓库设置里改成 `master`。
   - 文件面板固定跟随当前会话的 host；若要「不开会话也能浏览」需再加 host 选择器。
+  - 界面效果尚未在 Windows 上目视确认（见上）。
   - 无已知未完成的计划任务；新需求按"设计确认 → 实现"流程走，勿直接动代码。
+- 默认分支已于 2026-09-12 由 `feat/core` 改为 `master`（原默认分支落后多个提交，
+  会导致新机器 clone 时 `remote HEAD refers to nonexistent ref` 且不检出任何文件）。
 - 跨机器协作进展见 `WORKLOG.md`（每次会话收工时更新）。
 
 ## 收工规矩
