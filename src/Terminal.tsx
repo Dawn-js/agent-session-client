@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { contextMenuAction, shouldCopySelection } from "./terminalClipboard";
 import "@xterm/xterm/css/xterm.css";
 
 export type ThemeName = "dark" | "light";
@@ -100,6 +101,31 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
     term.open(hostRef.current!);
     fit.fit();
 
+    term.onKey(({ key, domEvent }) => {
+      // 有选区时 Ctrl+C / Cmd+C 是复制，不把 ETX 发给远端。
+      // 没有选区时不拦截；后端仍会按现有安全策略丢弃它。
+      if (
+        shouldCopySelection({
+          key,
+          domEventKey: domEvent.key,
+          ctrlKey: domEvent.ctrlKey,
+          metaKey: domEvent.metaKey,
+          hasSelection: term.hasSelection(),
+        })
+      ) {
+        domEvent.preventDefault();
+        domEvent.stopPropagation();
+        const selection = term.getSelection();
+        if (selection) {
+          const copy = navigator.clipboard?.writeText(selection);
+          if (copy) {
+            void copy.catch(() => {
+              /* 剪贴板权限被拒绝时保留选区，不打断终端输入 */
+            });
+          }
+        }
+      }
+    });
     term.onData(onData);
     registerWriter((data) => term.write(data));
 
@@ -137,18 +163,31 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
         const path = e.dataTransfer.getData("text/plain");
         if (path) onData(path);
       }}
-      // 右键粘贴。用 navigator.clipboard 而不是剪贴板插件：
-      // 右键是用户手势，WebView2 在这个前提下允许读剪贴板。
+      // 右键：有选区就复制，没有选区就粘贴。
+      // 都是用户手势，WebView2 在这个前提下允许访问剪贴板。
       onContextMenu={(e) => {
         e.preventDefault();
-        navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) onData(text);
-          })
-          .catch(() => {
-            /* 没有剪贴板权限就静默忽略，不打断输入 */
-          });
+        const action = contextMenuAction(termRef.current?.hasSelection() ?? false);
+        if (action === "copy") {
+          const selection = termRef.current?.getSelection() ?? "";
+          const copy = selection ? navigator.clipboard?.writeText(selection) : undefined;
+          if (copy) {
+            void copy.catch(() => {
+              /* 没有剪贴板权限就静默忽略，不打断输入 */
+            });
+          }
+          return;
+        }
+        const paste = navigator.clipboard?.readText();
+        if (paste) {
+          void paste
+            .then((text) => {
+              if (text) onData(text);
+            })
+            .catch(() => {
+              /* 没有剪贴板权限就静默忽略，不打断输入 */
+            });
+        }
       }}
     />
   );
