@@ -30,18 +30,41 @@ pub fn destination(target: &SshTarget) -> String {
     }
 }
 
+/// 用**登录 shell** 跑一条远端命令。
+///
+/// 非交互 ssh（app 发起的形状）拿到的 PATH 是最小集，**不含 `~/.local/bin`**；
+/// 而 agent（hermes / dsh）恰好装在那里，`~/.local/bin` 是由 `~/.profile` 和
+/// `~/.bashrc` 加进 PATH 的，这两条非交互 ssh 都不会读。更麻烦的是 tmux 新建
+/// 会话继承的是**客户端**环境（不是 tmux server 的全局环境），所以
+/// `tmux new -As s 'hermes chat'` 会 `command not found`（exit 127），
+/// 会话随即消失（`remain-on-exit` 默认 off）。
+///
+/// 实测（main，2026-09-12）：
+/// ```text
+/// 非交互:  PATH=/usr/local/sbin:...  hermes=MISSING
+/// 登录shell: PATH=...:/home/ubuntu/.local/bin:...  hermes=/home/ubuntu/.local/bin/hermes
+/// ```
+///
+/// 用 `$SHELL` 而不是写死 `bash`：登录 shell 就是用户真正登录时拿到的那个环境。
+/// 会话和探测**必须走同一个形状**，否则又会出现「探测说没装、会话其实能跑」。
+pub fn login_shell(cmd: &str) -> String {
+    format!("${{SHELL:-/bin/bash}} -lc {}", shell_quote(cmd))
+}
+
 /// 注意前面的 `set -g mouse on`：tmux 的 mouse 模式默认是关的，不开的话滚轮
 /// 事件在 tmux 里不产生任何滚动（只有 mouse on 时 tmux 才会进 copy-mode 翻历史）。
 ///
 /// 代价：mouse on 之后 tmux 会接管鼠标拖拽选择，想用系统选区复制要按住 Shift。
 /// 不想要就在远端执行 `tmux set -g mouse off`。
+///
+/// 整条命令套在登录 shell 里跑 —— 原因见 `login_shell`。
 pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
-    format!(
+    login_shell(&format!(
         "tmux set -g mouse on; tmux set -t {} mouse on 2>/dev/null; tmux new -As {} {}",
         shell_quote(session),
         shell_quote(session),
         shell_quote(agent_cmd)
-    )
+    ))
 }
 
 fn base_argv(target: &SshTarget) -> Vec<String> {
@@ -130,21 +153,36 @@ mod tests {
     }
 
     #[test]
-    fn builds_remote_tmux_cmd() {
-        assert_eq!(
-            build_remote_tmux_cmd("hermes-proj", "hermes chat"),
-            "tmux set -g mouse on; tmux set -t 'hermes-proj' mouse on 2>/dev/null; tmux new -As 'hermes-proj' 'hermes chat'"
-        );
+    fn remote_tmux_cmd_runs_in_a_login_shell() {
+        // 非交互 ssh 的 PATH 不含 ~/.local/bin（agent 恰好装在那里），而 tmux 新建
+        // 会话继承的是**客户端**环境 —— 不套登录 shell，`hermes chat` 会
+        // command not found（exit 127），会话随即消失。
+        let cmd = build_remote_tmux_cmd("hermes-proj", "hermes chat");
+        assert!(cmd.starts_with("${SHELL:-/bin/bash} -lc '"), "{cmd}");
+        assert!(cmd.ends_with('\''), "{cmd}");
+        assert!(cmd.contains("tmux set -g mouse on"), "{cmd}");
+        assert!(cmd.contains("tmux set -t"), "{cmd}");
+        assert!(cmd.contains("tmux new -As"), "{cmd}");
+    }
+
+    #[test]
+    fn login_shell_quotes_the_inner_command() {
+        assert_eq!(login_shell("echo hi"), "${SHELL:-/bin/bash} -lc 'echo hi'");
+        // 内层单引号必须转义，否则命令到那里就被截断了
+        assert_eq!(login_shell("echo 'x'"), "${SHELL:-/bin/bash} -lc 'echo '\\''x'\\'''");
     }
 
     #[test]
     fn builds_session_argv_with_keepalive_and_tty() {
-        assert_eq!(build_session_argv(&target(), "hermes-proj", "hermes chat"), vec![
+        let argv = build_session_argv(&target(), "hermes-proj", "hermes chat");
+        let head = vec![
             "ssh",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-t", "ubuntu@example.com",
-            "tmux set -g mouse on; tmux set -t 'hermes-proj' mouse on 2>/dev/null; tmux new -As 'hermes-proj' 'hermes chat'",
-        ]);
+        ];
+        assert_eq!(&argv[..head.len()], &head[..]);
+        assert_eq!(argv.len(), head.len() + 1);
+        assert_eq!(argv[head.len()], build_remote_tmux_cmd("hermes-proj", "hermes chat"));
     }
 
     #[test]

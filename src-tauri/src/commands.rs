@@ -8,7 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use session_core::agents::{build_probe_agents_cmd, parse_probe_agents_output, KNOWN_AGENTS};
-use session_core::command::{build_exec_argv, probe_outcome, SshTarget};
+use session_core::command::{build_exec_argv, login_shell, probe_outcome, SshTarget};
 use session_core::config::{parse_config, resolve_target, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
@@ -485,6 +485,10 @@ pub async fn list_skills(
 ///
 /// 走一次性 ssh（`exec_remote_oneshot`），不占用文件面板那条长驻通道。
 /// 返回的只是候选：写不写进配置由界面上确认。
+///
+/// 探测命令套在登录 shell 里跑 —— **必须与会话（`build_remote_tmux_cmd`）同一个
+/// 形状**，否则「探测说没装、会话其实能跑」两边又不一致，首启引导会一直拒绝
+/// 写配置。见 `command::login_shell`。
 #[tauri::command]
 pub async fn probe_agents(
     state: State<'_, AppState>,
@@ -495,7 +499,8 @@ pub async fn probe_agents(
         let guard = state.config.lock().unwrap();
         resolve_target(guard.as_ref(), &host)
     };
-    let stdout = exec_remote_oneshot(target, build_probe_agents_cmd()).await?;
+    let cmd = login_shell(&build_probe_agents_cmd());
+    let stdout = exec_remote_oneshot(target, cmd).await?;
     Ok(parse_probe_agents_output(&stdout)
         .into_iter()
         .map(|a| AgentView {
