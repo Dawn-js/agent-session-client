@@ -20,6 +20,20 @@ pub struct Listing {
     pub entries: Vec<Entry>,
 }
 
+/// 引用一个目录路径供 shell 使用。
+///
+/// 不能直接 `shell_quote`：它会把 `~` 一起塞进单引号里，shell 就不再展开它，
+/// `cd '~'` 会去找一个**字面名叫 `~` 的目录**并报 `No such file or directory`。
+/// 所以 `~` 要替换成 `$HOME` 并放在引号**外面**（shell 里 `$HOME'/x'` 会拼接成一个词）。
+fn quote_dir(dir: &str) -> String {
+    match dir.strip_prefix('~') {
+        Some("") => "$HOME".to_string(),
+        Some(rest) if rest.starts_with('/') => format!("$HOME{}", shell_quote(rest)),
+        // `~user` 这种形式不处理：让它在远端响亮地失败，比猜错强
+        _ => shell_quote(dir),
+    }
+}
+
 /// 列 `dir` 下一层的远端命令。
 ///
 /// `cd && pwd` 而不是直接 `find <dir>`：`~` 和 `..` 只有远端 shell 展开得了，
@@ -31,7 +45,7 @@ pub struct Listing {
 pub fn build_list_cmd(dir: &str) -> String {
     format!(
         "cd {} && pwd && find . -mindepth 1 -maxdepth 1 -printf '%Y\\t%s\\t%f\\n'",
-        shell_quote(dir)
+        quote_dir(dir)
     )
 }
 
@@ -100,6 +114,18 @@ mod tests {
             "cd '/home/ubuntu/my proj' && pwd && \
              find . -mindepth 1 -maxdepth 1 -printf '%Y\\t%s\\t%f\\n'"
         );
+    }
+
+    #[test]
+    fn tilde_is_expanded_outside_the_quotes() {
+        // 回归：`cd '~'` 会报 "No such file or directory" ——
+        // 单引号阻止 shell 展开 ~，于是去找字面名叫 ~ 的目录。
+        assert!(build_list_cmd("~").starts_with("cd $HOME && pwd"));
+        // ~/x 要拼成一个词：shell 里 $HOME'/x' 是合法的
+        assert!(build_list_cmd("~/proj").starts_with("cd $HOME'/proj' && pwd"));
+        // 普通路径仍然整体加引号
+        assert!(build_list_cmd("/tmp").starts_with("cd '/tmp' && pwd"));
+        assert!(build_list_cmd("/a b/c").starts_with("cd '/a b/c' && pwd"));
     }
 
     #[test]

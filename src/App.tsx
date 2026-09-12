@@ -28,6 +28,7 @@ export default function App() {
   const [hostOf, setHostOf] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(true);
   const writerRef = useRef<((d: string) => void) | null>(null);
 
   const reload = useCallback(async () => {
@@ -122,6 +123,16 @@ export default function App() {
           <span className="brand-dot" />
           Agent Sessions
         </div>
+
+        {/* 开关放在侧边栏：无论有没有活动会话都可见，
+            否则隐藏后没有会话就再也开不回来了 */}
+        <button
+          className={`panel-toggle${filesOpen ? " is-on" : ""}`}
+          onClick={() => setFilesOpen((open) => !open)}
+          title={filesOpen ? "隐藏服务器文件栏" : "显示服务器文件栏"}
+        >
+          {filesOpen ? "▸ 隐藏文件栏" : "◂ 显示文件栏"}
+        </button>
 
         <section className="panel">
           <h2 className="panel-title">会话</h2>
@@ -225,7 +236,7 @@ export default function App() {
         )}
       </main>
 
-      <FilePanel host={active ? hostOf[active] ?? null : null} />
+      {filesOpen && <FilePanel host={active ? hostOf[active] ?? null : null} />}
 
       {settingsOpen && config && (
         <SettingsModal
