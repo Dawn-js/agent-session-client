@@ -341,6 +341,9 @@ button:hover {
 
 .row {
   display: flex;
+  /* 必须换行：~/.ssh/config 里的别名可能有四五个，其中一个还可能很长
+     （比如 github.com），不换行时按钮会被挤出侧栏外面看不见。 */
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
 }
