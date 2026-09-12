@@ -91,6 +91,26 @@ pub fn build_exec_argv(target: &SshTarget, cmd: &str) -> Vec<String> {
     argv
 }
 
+/// 判定一条**一次性** ssh exec 的结果。
+///
+/// 只要有 stdout 就用它：探测命令是 shell 循环，可能部分失败（末尾的 bin 不存在
+/// 会让整条命令非零退出），但既然拿到了输出就说明连上了，筛选交给解析层。
+/// 只有「没有输出且退出码非零」才算真失败，报 stderr 原文 —— ssh 的报错都在那里。
+///
+/// 注意 `code == 0 && stdout.is_empty()` 是**合法答案**（一台 agent 都没装），
+/// 不是失败；把它当错误会让「该主机上没有已知 agent」这条引导文案永远看不到。
+pub fn probe_outcome(code: i32, stdout: &str, stderr: &str) -> Result<String, String> {
+    if code == 0 || !stdout.trim().is_empty() {
+        return Ok(stdout.to_string());
+    }
+    let msg = stderr.trim();
+    Err(if msg.is_empty() {
+        format!("远端命令退出码 {code}")
+    } else {
+        msg.to_string()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +175,33 @@ mod tests {
             "ubuntu@example.com",
             "ls -1",
         ]);
+    }
+
+    #[test]
+    fn probe_outcome_returns_stdout_on_success() {
+        assert_eq!(probe_outcome(0, "hermes\n", "").unwrap(), "hermes\n");
+    }
+
+    #[test]
+    fn probe_outcome_keeps_stdout_even_on_nonzero_exit() {
+        // 恰好最后一个 bin 没装时远端可能给非零退出码，但输出是真的，不能丢
+        assert_eq!(probe_outcome(1, "hermes\n", "noise").unwrap(), "hermes\n");
+    }
+
+    #[test]
+    fn probe_outcome_reports_stderr_when_there_is_no_output() {
+        let err = probe_outcome(255, "", "ssh: Could not resolve hostname nope").unwrap_err();
+        assert_eq!(err, "ssh: Could not resolve hostname nope");
+    }
+
+    #[test]
+    fn probe_outcome_falls_back_to_exit_code_when_stderr_is_empty() {
+        assert_eq!(probe_outcome(255, "", "").unwrap_err(), "远端命令退出码 255");
+    }
+
+    #[test]
+    fn probe_outcome_treats_empty_success_as_a_real_answer() {
+        // 「一台都没装」是合法结果，不是失败
+        assert_eq!(probe_outcome(0, "", "").unwrap(), "");
     }
 }

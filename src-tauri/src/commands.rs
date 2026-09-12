@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +8,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use session_core::agents::{build_probe_agents_cmd, parse_probe_agents_output, KNOWN_AGENTS};
-use session_core::config::{parse_config, validate};
+use session_core::command::{build_exec_argv, probe_outcome, SshTarget};
+use session_core::config::{parse_config, resolve_target, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
 };
@@ -17,7 +19,7 @@ use session_core::session::SessionState;
 use session_core::ssh_config::parse_ssh_config;
 
 use crate::filechan::FileChan;
-use crate::runner::{run_session, RunnerMsg};
+use crate::runner::{hide_console, run_session, RunnerMsg};
 
 #[derive(Serialize)]
 pub struct HostView {
@@ -97,7 +99,7 @@ async fn exec_remote(
 
 fn with_chan(
     chan: &Arc<Mutex<Option<FileChan>>>,
-    target: &session_core::command::SshTarget,
+    target: &SshTarget,
     host: &str,
     cmd: &str,
 ) -> Result<String, String> {
@@ -114,7 +116,7 @@ fn with_chan(
 
 fn once(
     chan: &Arc<Mutex<Option<FileChan>>>,
-    target: &session_core::command::SshTarget,
+    target: &SshTarget,
     host: &str,
     cmd: &str,
 ) -> Result<String, String> {
@@ -124,6 +126,36 @@ fn once(
         *guard = Some(FileChan::spawn(target, host)?);
     }
     guard.as_mut().unwrap().run(cmd)
+}
+
+/// 一次性 ssh 跑一条远端命令，返回 stdout。
+///
+/// 用在「问一句就回」、而且**不该占用文件面板那条长驻通道**的场景（探测已装 agent）。
+/// 独立 ssh 进程 + `ConnectTimeout=10` 兜底，不碰 `state.file_chan`，所以既不会把
+/// 文件面板的通道顶掉，两边也不会互相等锁。
+///
+/// 这是「一次性」的：单条命令最长约 `ConnectTimeout` + 命令本身，不可取消。
+/// 探测是有进度提示的用户动作，这个上限够用；哪天要更长或要可取消，得换成
+/// 自己持 Child 句柄的形式（`runner.rs` 的会话进程就是那么做的）。
+///
+/// 必须 `spawn_blocking`：`Command::output()` 是阻塞的，直接在 async 上下文里
+/// 跑会卡住运行时（和 `exec_remote` 同一个坑）。
+async fn exec_remote_oneshot(target: SshTarget, cmd: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let argv = build_exec_argv(&target, &cmd);
+        let mut command = StdCommand::new(&argv[0]);
+        command.args(&argv[1..]);
+        let out = hide_console(&mut command)
+            .output()
+            .map_err(|e| format!("启动 ssh 失败: {e}"))?;
+        probe_outcome(
+            out.status.code().unwrap_or(-1),
+            &String::from_utf8_lossy(&out.stdout),
+            &String::from_utf8_lossy(&out.stderr),
+        )
+    })
+    .await
+    .map_err(|e| format!("远端命令任务失败: {e}"))?
 }
 
 /// Candidate config locations, highest priority first. The first existing file
@@ -444,16 +476,26 @@ pub async fn list_skills(
         .collect())
 }
 
-/// 探测某个 host 上装了哪些已知 agent。
+/// 探测某台主机上装了哪些已知 agent。
 ///
-/// 走文件面板那条长驻 ssh（`exec_remote`），不占用也不污染 PTY 会话。
-/// 返回的只是候选：写不写进配置由用户在设置面板里确认。
+/// `host` 既可以是已保存配置里的 `host.name`，也可以是 `~/.ssh/config` 里的别名 ——
+/// 后者是首次启动的情况：那时还没有配置文件，界面上列的正是别名
+/// （见 `resolve_target`）。以前这里只认已保存的 host 名，首启因此探测不了，
+/// 只能把注册表全集猜着写进配置。
+///
+/// 走一次性 ssh（`exec_remote_oneshot`），不占用文件面板那条长驻通道。
+/// 返回的只是候选：写不写进配置由界面上确认。
 #[tauri::command]
 pub async fn probe_agents(
     state: State<'_, AppState>,
     host: String,
 ) -> Result<Vec<AgentView>, String> {
-    let stdout = exec_remote(&state, &host, build_probe_agents_cmd()).await?;
+    // 作用域必须先结束：std 的 MutexGuard 不能跨 await 持有
+    let target = {
+        let guard = state.config.lock().unwrap();
+        resolve_target(guard.as_ref(), &host)
+    };
+    let stdout = exec_remote_oneshot(target, build_probe_agents_cmd()).await?;
     Ok(parse_probe_agents_output(&stdout)
         .into_iter()
         .map(|a| AgentView {

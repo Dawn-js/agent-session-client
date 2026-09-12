@@ -70,6 +70,24 @@ impl Config {
     }
 }
 
+/// 把界面给的主机标识解析成连接目标，**不需要已有配置**。
+///
+/// 先在已加载的配置里按 `host.name` 查；查不到就把它当成 ssh 别名原样交给系统
+/// ssh（`~/.ssh/config` 会去解释 HostName/User/Port）。
+///
+/// 首次启动时还没有配置文件，界面上列的正是 `~/.ssh/config` 的别名 ——
+/// 探测必须走别名这条路，否则「选一台服务器开始」只能退化成猜 agent
+/// （把注册表全集写进配置，点没装的 agent 必然挂）。
+pub fn resolve_target(config: Option<&Config>, host_or_alias: &str) -> SshTarget {
+    config
+        .and_then(|cfg| cfg.to_ssh_target(host_or_alias))
+        .unwrap_or_else(|| SshTarget {
+            host: host_or_alias.to_string(),
+            user: None,
+            extra_ssh_args: Vec::new(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +132,32 @@ mod tests {
         assert_eq!(t.user.as_deref(), Some("ubuntu"));
         assert!(t.extra_ssh_args.is_empty());
         assert!(cfg.to_ssh_target("nope").is_none());
+    }
+
+    #[test]
+    fn resolves_saved_host_through_config() {
+        let cfg = parse_config(GOOD).unwrap();
+        let t = resolve_target(Some(&cfg), "main");
+        assert_eq!(t.host, "10.0.0.1");
+        assert_eq!(t.user.as_deref(), Some("ubuntu"));
+    }
+
+    #[test]
+    fn falls_back_to_raw_alias_when_no_config_exists() {
+        // 首次启动还没有配置文件。此时界面上列的是 ~/.ssh/config 的别名，
+        // 探测必须能按别名直接连 —— 否则首启只能靠猜 agent。
+        let t = resolve_target(None, "main");
+        assert_eq!(t.host, "main");
+        assert_eq!(t.user, None);
+        assert!(t.extra_ssh_args.is_empty());
+    }
+
+    #[test]
+    fn falls_back_to_raw_alias_when_config_lacks_the_name() {
+        let cfg = parse_config(GOOD).unwrap();
+        let t = resolve_target(Some(&cfg), "some-alias");
+        assert_eq!(t.host, "some-alias");
+        assert_eq!(t.user, None);
     }
 
     #[test]
