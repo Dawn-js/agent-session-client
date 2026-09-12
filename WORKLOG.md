@@ -2,13 +2,52 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-12（文件面板 / TUI 修复 / 应用图标）
+
+**本次做了什么**
+
+- **服务器文件系统面板**（右侧）：core 新增 `files` 模块（`build_list_cmd` / `parse_listing` / `join_path`），
+  `command` 新增 `build_exec_argv`（一次性 ssh），`src-tauri` 新增 `list_dir` 命令，前端新增 `FilePanel.tsx`。
+  走一次性 ssh 进程，**不占用也不污染任何 PTY 会话**，未引入 SFTP 或任何新依赖。
+- **拖拽插入路径**：文件/文件夹拖到终端即把远端绝对路径写入 PTY（走标准 `text/plain`）。
+- **右键粘贴**：`onContextMenu` + `navigator.clipboard`，未引入剪贴板插件。
+- **TUI 字体与对比度**：补齐 xterm 的 `fontFamily`（Cascadia Mono 栈）与完整 16 色 ANSI 调色板，
+  另加 `fontWeightBold` / `lineHeight` / `letterSpacing`。
+- **应用图标**：新增 `src-tauri/app-icon.svg`（两节点+连线，"会话/连接"主题），
+  用 `npx tauri icon` 生成全平台尺寸，替换了原先的 Tauri 默认图标。
+
+**当前状态**
+
+- 版本 `0.2.0`，分支 `master`；`cargo test`（56）、`npm test`（14）、`npm run build` 全绿，
+  `cargo check -p agent-session-client` 0 warning。
+- 前端已构建通过，但**界面效果未经 Windows 目视确认**（本机编译不了 Rust，见下方「踩过的坑」）。
+
+**下一步计划**
+
+- 在 Windows 上 `npx tauri dev` 目视确认：文件面板布局、拖拽插入、右键粘贴、终端字体观感。
+- 面板目前固定跟随当前会话的 host；如需「不开会话也能浏览」再加 host 选择器。
+- 若要显示文件修改时间，`find -printf` 加回 `%T@` 即可（本次刻意未做，避免留无用字段）。
+
+**踩过的坑**
+
+- **本机 Windows 编译不了 Rust**：只装了 `x86_64-pc-windows-msvc` 工具链但没装 MSVC 链接器，
+  且 `link.exe` 会被 Git Bash 的 coreutils `link` 遮蔽，报错是 `link: extra operand '...\*.rcgu.o'`，
+  **看着像代码错，实际是工具链问题**。本机验证一律走 `main` 服务器（见 AGENTS.md「开发环境」）。
+- **修正 AGENTS.md 的一处说法**：`cargo check -p agent-session-client` 在服务器上**能过**，
+  并非"src-tauri 只能靠 CI 保证"。改完 src-tauri 记得 `touch` 源文件强制重编，避免被缓存结果骗过。
+- **SVG 注释里不能出现连续两个连字符**：图标源文件注释里写了 `--accent` 这类 CSS 变量名，
+  resvg 直接 panic（`InvalidComment`），且**报错位置指向注释开头**，容易找错地方。
+- `npx tauri icon` 会顺带生成 `android/` `ios/` 目录，Windows 项目需手动删除。
+- 前端 `xterm` 的默认字体（`courier-new`）和默认 ANSI 调色板（为纯黑背景设计）在深色面板上观感很差，
+  这是"字体不清晰、对比度不高"的根因，不是显示器或缩放问题。
+
 ## 2026-09-12（Windows 本机同步链路打通）
 
 **本次做了什么**
 
 - 打通 Windows 开发机的 git ↔ GitHub 同步链路（跨机器协作基础设施，非代码改动）：
   - 排查出本机 git 直连 GitHub HTTPS 报 `Empty reply from server`，而本机 `127.0.0.1:7890` 有代理在跑；为 git 配置 `http.proxy` / `https.proxy` 后恢复
-  - 配置全局身份 `Dawn-js <55617812+Dawn-js@users.noreply.github.com>`
+  - 配置全局身份 `owlshift <55617812+owlshift@users.noreply.github.com>`（当日随后 GitHub 用户名由 `Dawn-js` 改为 `owlshift`，同步更新了 remote 地址与 README 徽章链接）
   - `credential.helper=manager`，首次 push 完成浏览器授权，凭据已持久化
   - 仓库 clone 至 `C:\Users\sunbo\workbuddy-ai\ssh开发\agent-session-client`
 
