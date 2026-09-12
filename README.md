@@ -131,6 +131,8 @@ npx tauri build        # 打包发布版
 
 参考模板见 [`examples/config.example.json`](examples/config.example.json)。
 
+> 也可以在应用内点侧栏底部的「**⚙ 编辑配置**」直接增删改 host / agent，保存时会校验并写入用户配置目录，无需手动编辑 JSON。
+
 > ⚠️ **真实配置值（服务器地址、用户名、agent 命令）永远不要提交到仓库。** 仓库中的示例始终保持 `REPLACE_WITH_*` 占位符。
 
 ### 配置从哪来

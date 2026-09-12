@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "./Terminal";
+import { AgentIcon } from "./icons";
+import { SettingsModal } from "./SettingsModal";
 import { applyState, STATE_META, type Session, type SessionState } from "./sessions";
 import {
   isConfigError,
@@ -21,6 +23,7 @@ export default function App() {
   const [notices, setNotices] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const writerRef = useRef<((d: string) => void) | null>(null);
 
   const reload = useCallback(async () => {
@@ -127,6 +130,7 @@ export default function App() {
                     className={`session${s.id === active ? " is-active" : ""}`}
                     onClick={() => setActive(s.id)}
                   >
+                    <AgentIcon agent={s.id} />
                     <span className="session-id">{s.id}</span>
                     <span className={`badge tone-${STATE_META[s.state].tone}`}>
                       {STATE_META[s.state].label}
@@ -145,20 +149,33 @@ export default function App() {
           ) : configError ? (
             <ConfigErrorPanel error={configError} onGenerate={generateConfig} onReload={reload} />
           ) : config ? (
-            <div className="new-grid">
-              {config.hosts.map((h) =>
-                config.agents.map((a) => (
-                  <button
-                    key={`${h.name}-${a.id}`}
-                    className="new-btn"
-                    onClick={() => void start(h.name, a.id)}
-                  >
-                    <strong>{h.name}</strong>
-                    <span>{a.label}</span>
-                  </button>
-                )),
-              )}
-            </div>
+            <>
+              <div className="new-grid">
+                {config.agents.map((a) => (
+                  <div className="agent-group" key={a.id}>
+                    <div className="agent-head">
+                      <AgentIcon agent={a.id} size={20} />
+                      <span className="agent-label">{a.label}</span>
+                    </div>
+                    <div className="agent-hosts">
+                      {config.hosts.map((h) => (
+                        <button
+                          key={`${h.name}-${a.id}`}
+                          className="new-btn"
+                          title={h.host}
+                          onClick={() => void start(h.name, a.id)}
+                        >
+                          {h.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
+                ⚙ 编辑配置
+              </button>
+            </>
           ) : null}
         </section>
 
@@ -172,6 +189,13 @@ export default function App() {
       <main className="main">
         {active ? (
           <>
+            <div className="term-head">
+              <AgentIcon agent={active} size={18} />
+              <span className="term-title">{active}</span>
+              <span className={`badge tone-${STATE_META[sessions.find((s) => s.id === active)?.state ?? "connecting"].tone}`}>
+                {STATE_META[sessions.find((s) => s.id === active)?.state ?? "connecting"].label}
+              </span>
+            </div>
             <div className="notices">
               {notices.length === 0 ? (
                 <span className="muted">—</span>
@@ -183,6 +207,11 @@ export default function App() {
           </>
         ) : (
           <div className="welcome">
+            <div className="welcome-icons">
+              {(config?.agents ?? []).slice(0, 5).map((a) => (
+                <AgentIcon key={a.id} agent={a.id} size={34} />
+              ))}
+            </div>
             <h1>Agent Sessions</h1>
             <p>选择左侧的 host / agent 开始一个持久化会话。</p>
             <p className="muted">断网后重连会自动回到同一会话，并恢复此前的输出。</p>
@@ -190,6 +219,14 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {settingsOpen && config && (
+        <SettingsModal
+          config={config}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => void reload()}
+        />
+      )}
     </div>
   );
 }

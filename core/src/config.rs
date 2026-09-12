@@ -1,24 +1,24 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::command::SshTarget;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub hosts: Vec<HostConfig>,
     pub agents: Vec<AgentConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HostConfig {
     pub name: String,
     pub host: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_ssh_args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentConfig {
     pub id: String,
     pub label: String,
@@ -114,5 +114,13 @@ mod tests {
         assert_eq!(t.user.as_deref(), Some("ubuntu"));
         assert!(t.extra_ssh_args.is_empty());
         assert!(cfg.to_ssh_target("nope").is_none());
+    }
+
+    #[test]
+    fn serialize_roundtrip_preserves_config_and_skips_empty_fields() {
+        let cfg = parse_config(GOOD).unwrap();
+        let json = serde_json::to_string_pretty(&cfg).unwrap();
+        assert!(!json.contains("extra_ssh_args"), "empty vec must be skipped: {json}");
+        assert_eq!(parse_config(&json).unwrap(), cfg);
     }
 }

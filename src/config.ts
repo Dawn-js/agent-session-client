@@ -3,11 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 export interface HostView {
   name: string;
   host: string;
+  user: string | null;
+  extra_ssh_args: string[];
 }
 
 export interface AgentView {
   id: string;
   label: string;
+  cmd: string;
 }
 
 export interface ConfigView {
@@ -44,4 +47,13 @@ export async function loadConfig(overridePath?: string): Promise<ConfigView> {
 /** Create the first-run template in the user config dir; returns its path. */
 export async function writeExampleConfig(): Promise<string> {
   return invoke<string>("write_example_config");
+}
+
+/**
+ * Validate and save the edited config JSON to the user config dir.
+ * Rejects with the backend's structured `{ kind: "invalid", errors }` payload
+ * when a field fails validation, so the editor can point at the offending row.
+ */
+export async function saveConfig(json: string): Promise<string> {
+  return invoke<string>("save_config", { json });
 }
