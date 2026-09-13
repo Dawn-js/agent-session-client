@@ -2,6 +2,38 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-13（修 freebuff「界面显示不全」：resize 后强制 tmux 全量重绘）
+
+**本次做了什么**
+
+- 用户报告：freebuff 界面显示不全、滚轮无效。在 Xvfb 真机复现并逐层定位（字节流重放
+  实验：tmux 发出的流重放进 headless xterm 与 tmux 自身视图逐字一致 → 问题在客户端
+  resize 竞态，不在传输/解析）。
+- **根因**：PTY 按 spawn 时硬编码的 80x24 收第一帧，前端 FitAddon 随即发 `__resize`；
+  tmux 对 resize 只补差量，新旧内容重叠的格子永远不被重写，错字/错位滚动条永久残留。
+- **修法**：runner 处理 `__resize` 后经 PTY 发 tmux 前缀键 `C-b :refresh-client`，
+  强制全量重绘。键被外层 tmux 客户端消费，不会进 agent。Xvfb 目视验证：重连后画面与
+  `tmux capture-pane` 完全一致，无残留。
+- **滚轮无效是 freebuff 自身缺陷，客户端无解**：它启动时申请鼠标上报（`mouse_any=1`）
+  但对 SGR 滚轮事件（press+release 成对、上下都试了）完全不响应；且跑在 alternate
+  screen，xterm 侧也无回滚。真终端直连同样无效。
+- 顺带发现：freebuff 单例锁被一个孤儿实例（pts/12，不在任何 tmux 会话）占着，用户会话
+  一点 Open 就弹 "already running"。已在用户会话里 Take over 回锁。
+
+**当前状态**
+
+- `cargo test`：100 passed（core）+ shim 4 passed；`cargo check` 0 warning；
+  `npm test` 28 passed；`npm run build` 通过。
+- A 机器 dev 配置（`~/.config/dev.local.agent-session-client/config.json`）加了 freebuff
+  agent 便于测试，保留。
+- 新坑备录：从无 TERM 的环境启动 app 时 ssh 带 `TERM=dumb`，tmux 客户端直接拒 attach
+  （`terminal does not support clear`）。Windows 不受影响；dev 跑 GUI 要 `TERM=xterm-256color`。
+
+**下一步计划**
+
+- 考虑在 transport 里兜底设 `TERM=xterm-256color`（小改，防 dumb 环境）。
+- freebuff 的滚轮/历史滚动只能在它自家修；可在 README 注明。
+
 ## 2026-09-12（首启流程真机验证 + 修「会话找不到 agent」）
 
 **本次做了什么**
