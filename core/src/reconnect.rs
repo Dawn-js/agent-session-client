@@ -10,6 +10,15 @@ pub const CLOSE_FRAME: &[u8] = b"__close";
 
 const RESIZE_PREFIX: &[u8] = b"__resize:";
 
+/// tmux 前缀键（C-b）+ `refresh-client` 命令：命令后缀字节。
+///
+/// 为什么 resize 之后要强制全量重绘：tmux 对客户端 resize 只补发**差量**，
+/// 而它对「客户端当前画面」的认知可能已经和实际不符 —— PTY 按 spawn 时的
+/// 80x24 收了第一帧，前端随即 resize，旧帧被塞进新网格，重叠的格子
+/// tmux 认为不用重发，错字就永久留在屏上。refresh-client 让 tmux 把整屏
+/// 真值重写一遍。前缀键被外层 tmux 客户端自己消费，不会进到 agent。
+pub const TMUX_REFRESH: &[u8] = b"\x02:refresh-client\r";
+
 /// 解析 `__resize:<cols>x<rows>` 控制帧。非法帧返回 None（调用方丢弃即可）。
 pub fn parse_resize_frame(frame: &[u8]) -> Option<(u16, u16)> {
     let dims = frame.strip_prefix(RESIZE_PREFIX)?;
@@ -161,6 +170,13 @@ mod tests {
     #[test]
     fn parses_well_formed_resize_frame() {
         assert_eq!(parse_resize_frame(b"__resize:120x40"), Some((120, 40)));
+    }
+
+    #[test]
+    fn refresh_chord_is_prefix_command_and_enter() {
+        // 0x02 = C-b（tmux 默认前缀）；命令以回车提交，否则提示符一直挂着
+        assert!(TMUX_REFRESH.starts_with(b"\x02:"));
+        assert!(TMUX_REFRESH.ends_with(b"refresh-client\r"));
     }
 
     #[test]

@@ -180,6 +180,9 @@ pub fn run_session(
                     if let Some(size) = parse_resize_frame(&frame) {
                         dims = size;
                         let _ = pty.resize(dims.0, dims.1);
+                        // tmux 对 resize 只发差量重绘，首帧又是按 spawn 时的初始尺寸
+                        // 画的 —— 不强制全量重绘，旧尺寸的错字会永久留在屏上
+                        let _ = pty.write(session_core::reconnect::TMUX_REFRESH);
                         continue;
                     }
                     let _ = pty.write(&frame);
