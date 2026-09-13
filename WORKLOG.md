@@ -24,7 +24,10 @@
 - **修「打字每个字重复」**：xterm 的 `dispose()` **不摘掉自己插入的 DOM**，而 `Terminal`
   的 effect 依赖 `onData`（依赖 `active`），切会话就会重建 —— 新旧两棵树叠着渲染。
   两处一起改：cleanup 里 `replaceChildren()` 清容器，`onData`/`onResize` 改用 ref 读
-  `active` 保持稳定（顺带不再切一次会话就重建终端）。
+  `active` 保持稳定。
+- **补一手**：回调稳定之后，切会话不再重建终端，上一个会话的画面就会留在屏上、新会话的
+  输出直接叠上去。给 `Terminal` 加 `key={active}`，把「一会话一终端实例」表达清楚
+  （重建本身是安全的，因为 cleanup 已经会清容器）。
 
 **当前状态**
 
