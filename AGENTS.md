@@ -199,17 +199,47 @@ npx tauri build       # 打包发布版（Linux 上会停在缺打包后端，�
     判断某个远端命令在 app 里能不能跑，**别在交互终端里试**，用
     `ssh -o BatchMode=yes <host> '<命令>'` 复现 app 的环境。
 
+18. **给 tmux 传「带空格的参数」必须走配置文件，不能内联**。内联的
+    `tmux bind -n WheelUpPane if -Ft= '#{pane_in_mode}' 'send-keys -M' 'copy-mode -e'`
+    经 `login_shell`（`shell_quote` 把整段包进单引号）之后，bash 的**第二次**解析会把
+    `'send-keys -M'` 拆成两个参数，tmux 直接报 `if-shell: too many arguments`（实测 exit=1）。
+    改成 `printf '%s\n' '<一行>' ... > /tmp/asc-tmux.conf` + `tmux source-file` 就对了
+    （tmux 自己解析引号，exit=0）。
+    **别指望在 shell 层把引号"送进去"**：语法引号会被消费掉；转义引号（`\"`）虽然字符
+    留下了，但不分组，tmux 收到的照样是拆开的参数。
+
+19. **pane 里滚轮没反应，先查 tmux 的 Wheel 绑定，而不是 `mouse`**。`mouse` 开着也会不滚：
+    tmux **默认**的 `WheelUpPane` 在 pane 申请鼠标时（`#{mouse_any_flag}`）把滚轮
+    **转发给 pane**，而 freebuff / hermes 这类 TUI 申请了鼠标却不响应滚轮 —— 看着就像
+    滚轮坏了。修法是去掉 `mouse_any_flag` 判断，一律由 tmux 进 copy-mode。
+    实测（pty 客户端发 `\x1b[<64;5;5M`，pane 里发 `\033[?1000h`）：
+    默认绑定 `#{pane_in_mode}=0`，覆盖后 `=1`。
+
+20. **取构建产物必须查 latest release，不要硬编码 tag**。旧 tag 的资产在发新版后依然在，
+    硬编码 URL 会一直下到旧包 —— 症状是"每次下的新包 sha256 都一样"，容易被误读成
+    "CI 没更新资产"。用 API 取 `tag_name` / `browser_download_url` / `digest`：
+
+    ```bash
+    curl -s https://api.github.com/repos/owlshift/agent-session-client/releases/latest | \
+      python3 -c "import json,sys; r=json.load(sys.stdin); print(r['tag_name']); \
+      [print(a['browser_download_url'], a['digest']) for a in r['assets']]"
+    ```
+
 ## 约定
 
 - Conventional Commits（`feat:` / `fix:` / `chore:` / `docs:` / `ci:`），英文小写。
 - TDD：先写会失败的测试，再写最小实现；提交粒度一个逻辑变更。
 - 最小 diff：不加投机抽象、不加没被要求的配置项。
 
-## 当前状态（2026-09-12）
+## 当前状态（2026-09-13）
 
-- 版本 `0.2.0`，分支 `master`。
+- 版本 `0.2.5`，分支 `master`。
+- 2026-09-13 变更：右侧「技能」页签**已删除**，改为「待办」（localStorage、全局共用，
+  见 `src/todos.ts`）；`list_skills` 命令与 core 的 skills 解析已一并删除。
+  同日修复：拖拽（`dragDropEnabled: false`）、关闭后无法重连（`close_session` 等表清空）、
+  终端字重影（xterm 重建时清容器）、滚轮（覆盖 tmux Wheel 绑定，见 ledger 18/19）。
 - 2026-09-12 新增：应用内配置编辑 + 设置面板（`5836d6c`）、服务器文件面板、拖拽插入远端路径、
-  右键粘贴、终端字体与 ANSI 配色、应用图标、文件面板的「技能」页签（列 agent 已装 skill）。
+  右键粘贴、终端字体与 ANSI 配色、应用图标。
   **界面效果未经 Windows 目视确认**，需要 `npx tauri dev` 看过才算完。
 - 2026-09-12 新增：会话行关闭按钮（关闭 = 只断本地 ssh，远端 tmux 保留）+ 修复「连接错误时
   会话关不掉」（根因见 ledger 15）；设置面板新增「探测服务器已装 agent」
