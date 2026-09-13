@@ -2,6 +2,40 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-13（终端体验：搜索 / 链接 / 剪贴板 / 真彩色 / resize 防抖）
+
+**本次做了什么**
+
+- **搜索**：`@xterm/addon-search`。`Ctrl+Shift+F` 打开浮层（`attachCustomKeyEventHandler`
+  拦下来，不让它变成远端输入），Enter 下一个 / Shift+Enter 上一个 / Esc 关闭。
+- **链接**：`@xterm/addon-web-links`。点不开时（Tauri 的 webview 会拦 `window.open`）
+  退化成复制链接 —— 这样不用引 opener 插件。
+- **剪贴板**：`@xterm/addon-clipboard` + tmux `set-clipboard on`，tmux 里的复制经 OSC 52
+  进 Windows 剪贴板。
+- **tmux 配置**（仍走 `printf` + `source-file`，见 ledger 18）新增三条：
+  `set-clipboard on`、`escape-time 10`（默认 500ms 会让 vim/TUI 的 ESC 发粘）、
+  `set -g terminal-overrides ",*256col*:Tc"`（`tmux-256color` 的 terminfo 实测没有 RGB，
+  不补只出 256 色）。
+- **resize 防抖**：前端 120ms debounce + 后端尺寸去重 —— 之前 ResizeObserver 每次抖动都会
+  `fit()` 并发 resize，后端每次都注入一遍 `refresh-client` 序列。
+
+**刻意跳过的（附理由）**
+
+- `extended-keys on`：**xterm.js 不支持** `modifyOtherKeys`/kitty 键盘协议
+  （源码里 grep 不到），设了也是空转。
+- `default-terminal tmux-256color`：tmux 3.4 的默认值就是它，多余。
+- 解析 Windows Terminal schemes：只有两套主题需求，为兼容别人的格式写解析器不划算。
+- Ligatures / Mica 无边框 / WebGL addon / 二进制 channel：收益不明或成本与收益不匹配。
+- **Ctrl+C 继续拦截**（用户明确选择保持现状）：清单建议"Ctrl+C 发 SIGINT、复制用
+  Ctrl+Shift+C"，但那会放弃「误触不丢会话」的保护（见 `keys::strip_quit_keys`）。
+
+**当前状态**
+
+- `cargo test` 98 passed（core）+ shim 4；`cargo check` 0 warning；`npm test` 33；
+  `npm run build` 通过（bundle 504KB，三个 addon 带来的，暂不做 code-split）。
+- 实测：新配置 `source-file` exit=0，`set-clipboard on` / `escape-time 10` /
+  `terminal-overrides[0] *256col*:Tc` 均生效，7 个会话未受影响。
+
 ## 2026-09-13（滚轮真因、待办面板、拖拽与关闭重连）
 
 **本次做了什么**

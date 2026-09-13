@@ -75,7 +75,10 @@ const ESCAPE_TIME: &str = "set -g escape-time 10";
 
 /// `tmux-256color` 的 terminfo 里没有 RGB 能力（`infocmp` 实测为 0），
 /// 不补这一条 tmux 只会输出 256 色。双引号是给 tmux 解析用的。
-const TRUECOLOR: &str = "set -ga terminal-overrides \",*256col*:Tc\"";
+///
+/// 用 `set -g` 而不是 `-ga`：`terminal-overrides` 默认是空的（实测），而 `-ga` 是追加 ——
+/// 每次连接都会再追加一条，值会无限变长。
+const TRUECOLOR: &str = "set -g terminal-overrides \",*256col*:Tc\"";
 
 /// 为什么 `mouse` 和滚轮绑定要写成配置文件再 `source-file`，而不是内联几条 `tmux` 命令：
 /// 内联时参数要经 login shell **二次解析**，`'send-keys -M'` 里的空格会被拆成两个参数，
