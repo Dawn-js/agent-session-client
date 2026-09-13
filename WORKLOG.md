@@ -2,6 +2,41 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-13（继续：按 Freebuff/OpenTUI 源码查清环境差异）
+
+**新证据**
+
+- 拉了 Freebuff 官方源码，确认项目使用 `@opentui/core@0.3.4`，项目选择器的
+  Open 是标准 `Button`：`onMouseDown` 记住按下，`onMouseUp` 调 `onSelectProject`。
+- OpenTUI 0.3.4 的鼠标解析**明确支持 SGR 1006**，解析 `\\x1b[<0;x;yM/m` 为 down/up；
+  因此此前"xterm 发 SGR、Freebuff 不支持"的猜测不成立。
+- tmux 侧也已实测点击 down/up 完整到达 pane。用户说"能选文件夹、只有 Open 点不了、
+  很早版本就存在"，所以不是新加的滚轮绑定。
+- **实际环境差异**：Freebuff 在客户端 pane 里看到 `TERM=tmux-256color`、
+  `TERM_PROGRAM=tmux`、没有 `COLORTERM`；原生 Windows Terminal 直连通常是
+  `TERM=xterm-256color`，没有 tmux 的 `TERM_PROGRAM`。
+
+**本次修法（提交前）**
+
+新建 agent 时把子进程环境对齐原生终端：
+
+```text
+env -u TERM_PROGRAM TERM=xterm-256color COLORTERM=truecolor <agent_cmd>
+```
+
+不动 tmux server 全局 `default-terminal`，避免影响其它会话；只影响新建的 agent 进程。
+已用独立 tmux 会话实测环境覆盖成功。**已有 freebuff 会话不会被魔改**，要验证这个假设
+需关闭/重建 freebuff 会话后再点 Open（这点没有擅自杀用户会话）。
+
+**显示对齐**（上一提交已完成）：WT Preview 的 `profiles.defaults` 为空、无自定义 scheme，
+所以按出厂 Campbell/Cascadia Mono 对齐：16px、行高 1、字距 0、8px padding、隐藏滚动条、
+Unicode11Addon。
+
+**验证**
+
+- core 102 + shim 4 passed；`cargo check` 通过；`npm test` 33 passed；`npm run build` 通过。
+- 本机 `cargo test` 仍受已知 Windows 无 MSVC link.exe 限制，服务器测试有效。
+
 ## 2026-09-13（显示对齐 Windows Terminal + 修鼠标坐标偏移）
 
 **本次做了什么**

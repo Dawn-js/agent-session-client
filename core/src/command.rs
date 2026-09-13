@@ -80,6 +80,16 @@ const ESCAPE_TIME: &str = "set -g escape-time 10";
 /// 每次连接都会再追加一条，值会无限变长。
 const TRUECOLOR: &str = "set -g terminal-overrides \",*256col*:Tc\"";
 
+/// 原生 Windows Terminal 通过 ssh -t 通常给远端的是 xterm-256color；
+/// tmux 默认会把 pane 内改成 tmux-256color。Freebuff/OpenTUI 的终端能力判断
+/// 在这两种 TERM 下不是同一条路径，导致同样的鼠标点击在原生终端能用、嵌入终端
+/// 只能部分命中。让 agent 子进程看到和原生连接一致的 TERM，COLORTERM 补真彩色。
+const AGENT_TERM_PREFIX: &str = "env -u TERM_PROGRAM TERM=xterm-256color COLORTERM=truecolor";
+
+pub fn with_native_terminal_env(agent_cmd: &str) -> String {
+    format!("{AGENT_TERM_PREFIX} {agent_cmd}")
+}
+
 /// 为什么 `mouse` 和滚轮绑定要写成配置文件再 `source-file`，而不是内联几条 `tmux` 命令：
 /// 内联时参数要经 login shell **二次解析**，`'send-keys -M'` 里的空格会被拆成两个参数，
 /// tmux 直接报 `if-shell: too many arguments`（实测 exit=1）。写进配置文件则由 tmux
@@ -105,7 +115,7 @@ pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
         up = shell_quote(WHEEL_UP),
         down = shell_quote(WHEEL_DOWN),
         s = shell_quote(session),
-        cmd = shell_quote(agent_cmd),
+        cmd = shell_quote(&with_native_terminal_env(agent_cmd)),
     ))
 }
 
@@ -218,6 +228,23 @@ mod tests {
     #[test]
     fn quotes_spaces_and_metachars() {
         assert_eq!(shell_quote("a b$c;d"), "'a b$c;d'");
+    }
+
+    #[test]
+    fn agent_gets_native_terminal_environment() {
+        assert_eq!(
+            with_native_terminal_env("freebuff --project"),
+            "env -u TERM_PROGRAM TERM=xterm-256color COLORTERM=truecolor freebuff --project"
+        );
+    }
+
+    #[test]
+    fn remote_tmux_command_sets_native_terminal_environment() {
+        let cmd = build_remote_tmux_cmd("freebuff", "freebuff");
+        assert!(
+            cmd.contains("env -u TERM_PROGRAM TERM=xterm-256color COLORTERM=truecolor freebuff"),
+            "{cmd}"
+        );
     }
 
     #[test]
