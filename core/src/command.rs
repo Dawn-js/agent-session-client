@@ -188,9 +188,14 @@ pub fn probe_outcome(code: i32, stdout: &str, stderr: &str) -> Result<String, St
 ///
 /// pane 在 alternate screen 时（freebuff 这类全屏 TUI）没有历史可滚，
 /// 此时命令仍会成功但看不出变化 —— 那是 TUI 自身的限制。
+///
+/// **`-e` 不能省**（踩过）：它是"滚到底部时退出 copy-mode"。少了它，用户滚完之后
+/// 会**一直留在 copy-mode**，而 copy-mode 会把键盘输入全部吃掉 —— 表现成
+/// "这个会话突然无法输入"。实测：hermes `pane_in_mode=1`、`scroll_position=0`
+/// （已经在底部却仍不退出），同期没滚过的 codebuddy 是 0。
 pub fn build_scroll_cmd(session: &str, up: bool, lines: u32) -> String {
     format!(
-        "tmux copy-mode -t {s} 2>/dev/null; tmux send-keys -t {s} -X -N {n} {dir}",
+        "tmux copy-mode -e -t {s} 2>/dev/null; tmux send-keys -t {s} -X -N {n} {dir}",
         s = shell_quote(session),
         n = lines,
         dir = if up { "scroll-up" } else { "scroll-down" },
@@ -249,9 +254,11 @@ mod tests {
     fn builds_scroll_cmd_entering_copy_mode_first() {
         let up = build_scroll_cmd("hermes", true, 3);
         // 必须先 copy-mode，否则 send-keys -X 没有作用的模式
-        assert!(up.contains("tmux copy-mode -t 'hermes'"), "{up}");
+        assert!(up.contains("tmux copy-mode -e -t 'hermes'"), "{up}");
         assert!(up.contains("send-keys -t 'hermes' -X -N 3 scroll-up"), "{up}");
         assert!(build_scroll_cmd("hermes", false, 3).contains("scroll-down"));
+        // -e（滚到底自动退出）不能丢：少了它用户会永久卡在 copy-mode 里无法输入
+        assert!(up.contains("copy-mode -e"), "{up}");
     }
 
     #[test]
