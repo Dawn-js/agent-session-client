@@ -225,6 +225,38 @@ npx tauri build       # 打包发布版（Linux 上会停在缺打包后端，�
       [print(a['browser_download_url'], a['digest']) for a in r['assets']]"
     ```
 
+21. **鼠标事件一个都到不了远端时，先查「客户端 TERM」，不要查坐标**。tmux 是按
+    **ssh 客户端自己的 TERM** 查 terminfo 决定要不要给这个客户端开鼠标的。实测
+    （main，tmux 3.4，pane 里跑真实 freebuff，客户端只换 TERM 一个变量）：
+
+    ```text
+    客户端 TERM        画面        鼠标使能序列 (\x1b[?1000h/1002h/1003h/1006h)
+    xterm-256color     正常        都发
+    vt100 / ansi / cygwin  正常    【一个都不发】 ← 界面看着完全对，鼠标全死
+    空 / dumb          起不来      tmux 直接拒绝: open terminal failed:
+                                  terminal does not support clear
+    ```
+
+    鼠标使能一旦不发，滚轮 / hover / 点击**全部**没反应，而键盘完全正常 —— 所以症状
+    长得像「某个按钮点不了」（freebuff 项目选择页的 Open 是唯一必须点鼠标的地方）。
+    "所有会话都滚不动"也是同一个根，当时被「客户端直接下发 tmux 命令」绕过去了。
+
+    **app 的 ssh 是 `Command::new("ssh")` 直接 spawn 的，TERM 继承自 app 进程**（Windows
+    上通常是空或不可用的值），而原生 Windows Terminal 走 `ssh -t` 给远端的是
+    `xterm-256color` —— 这就是「WT 里点得开、app 里点不开」的全部差别。修法是给 ssh
+    **进程**钉 TERM（`command::SSH_CLIENT_ENV` + `PtySession::spawn_with_env`），
+    不是给 pane 里的 agent 设 —— `AGENT_TERM_PREFIX` 那一层对鼠标没有任何作用
+    （实测 freebuff 在 tmux-256color / xterm-256color 下输出逐字节相同）。
+
+    **排查顺序**（可复现，不必开 GUI）：
+    1. `tmux list-clients -F '#{client_termname} #{client_width}x#{client_height}'`
+       —— app 挂着时看它那个客户端的 TERM。
+    2. 用 pty 客户端跑一遍 app 的远端命令，抓输出里的 `\x1b[?\?1006h`：
+       没有就是这一条；有鼠标使能而仍然点不动，才轮到查坐标 / 编码。
+    3. 坐标那条线已经排除干净：xterm.js 的像素→格子换算在 DPR 1/1.25/1.5/2 下
+       点「肉眼看到的那串 Open 文字」都精确落在 Open 所在格（真 Chromium 实测），
+       freebuff 也从不启用 SGR-pixels(1016)。
+
 ## 约定
 
 - Conventional Commits（`feat:` / `fix:` / `chore:` / `docs:` / `ci:`），英文小写。
@@ -234,6 +266,14 @@ npx tauri build       # 打包发布版（Linux 上会停在缺打包后端，�
 ## 当前状态（2026-09-13）
 
 - 版本 `0.2.5`，分支 `master`。
+- 2026-09-13 修复（**待用户确认**）：**鼠标在 app 里完全无效**的根因 = ssh 客户端 TERM
+  不可用，tmux 因此不给客户端开鼠标（滚轮/hover/点击全死、键盘正常；freebuff 的 Open
+  是唯一必须点鼠标的地方所以只有它暴露）。修法见 ledger 21：
+  `core::command::SSH_CLIENT_ENV` + `PtySession::spawn_with_env`，把 ssh **进程**的
+  TERM 钉成 `xterm-256color`。本地已验证：钉住后远端 client TERM=xterm-256color 且
+  `1000h/1002h/1003h/1006h` 齐全；未钉住时 tmux 直接拒绝起客户端。
+  ⚠️ 同一提交里对 `AGENT_TERM_PREFIX` 的注释做了更正（它只影响 pane 内 agent，
+  对鼠标无作用 —— 实测 freebuff 在两种 TERM 下输出逐字节相同）。
 - 2026-09-13 变更：右侧「技能」页签**已删除**，改为「待办」（localStorage、全局共用，
   见 `src/todos.ts`）；`list_skills` 命令与 core 的 skills 解析已一并删除。
   同日修复：拖拽（`dragDropEnabled: false`）、关闭后无法重连（`close_session` 等表清空）、

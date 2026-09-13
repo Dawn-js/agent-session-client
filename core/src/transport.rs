@@ -11,6 +11,19 @@ pub struct PtySession {
 
 impl PtySession {
     pub fn spawn(argv: &[String], cols: u16, rows: u16) -> Result<Self, String> {
+        Self::spawn_with_env(argv, cols, rows, &[])
+    }
+
+    /// `envs` 会覆盖同名环境变量，其余变量仍从父进程继承。
+    ///
+    /// 给 ssh **客户端**钉住 TERM 用（见 `command::SSH_CLIENT_ENV`）：tmux 按客户端
+    /// 的 TERM 查 terminfo 决定开不开鼠标，值不对就一个鼠标事件都到不了远端。
+    pub fn spawn_with_env(
+        argv: &[String],
+        cols: u16,
+        rows: u16,
+        envs: &[(&str, &str)],
+    ) -> Result<Self, String> {
         let first = argv.first().ok_or_else(|| "empty argv".to_string())?;
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -19,6 +32,9 @@ impl PtySession {
 
         let mut cmd = CommandBuilder::new(first);
         cmd.args(&argv[1..]);
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
 
         let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave);
@@ -94,6 +110,30 @@ pub fn complete_utf8_prefix(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::complete_utf8_prefix;
+
+    /// 子进程把 `$TERM` 写进这个文件，测试再读回来 —— 这样不必从 PTY 读，
+    /// 任何一步失败都不会把测试挂死。
+    #[test]
+    #[cfg(unix)]
+    fn spawn_with_env_overrides_variables_for_the_child() {
+        use super::PtySession;
+
+        let dir = std::env::temp_dir().join(format!("asc-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("term.txt");
+
+        let script = format!("printf '%s' \"$TERM\" > {}", out.display());
+        let argv = vec!["sh".to_string(), "-c".to_string(), script];
+        let mut pty =
+            PtySession::spawn_with_env(&argv, 80, 24, &[("TERM", "xterm-256color")]).unwrap();
+        let _ = pty.wait();
+
+        let got = std::fs::read_to_string(&out).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        // ssh 客户端的 TERM 决定 tmux 开不开鼠标，必须真的覆盖掉父进程的值
+        assert_eq!(got, "xterm-256color");
+    }
 
     // '中' = E4 B8 AD，3 字节 CJK 字符
 

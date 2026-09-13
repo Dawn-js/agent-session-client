@@ -6,7 +6,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use session_core::backoff::Backoff;
-use session_core::command::{build_probe_argv, build_session_argv, destination, shell_quote, SshTarget};
+use session_core::command::{
+    build_probe_argv, build_session_argv, destination, shell_quote, SshTarget, SSH_CLIENT_ENV,
+};
 use session_core::exit::{classify_ssh, SshOutcome};
 use session_core::reconnect::{
     classify_unexpected_exit, decide, drain_pending, parse_resize_frame, wait_for_close,
@@ -122,7 +124,10 @@ pub fn run_session(
         }
 
         let argv = build_session_argv(&target, &session, &agent_cmd);
-        let mut pty = match PtySession::spawn(&argv, dims.0, dims.1) {
+        // 给 ssh **客户端**钉住 TERM：tmux 按客户端 TERM 决定开不开鼠标，
+        // 值不对（空 / dumb / vt100 之类）时一个鼠标事件都到不了远端 ——
+        // 滚轮、hover、点击全死而键盘正常。见 command::SSH_CLIENT_ENV。
+        let mut pty = match PtySession::spawn_with_env(&argv, dims.0, dims.1, &SSH_CLIENT_ENV) {
             Ok(p) => p,
             Err(e) => {
                 let _ = tx.send(RunnerMsg::Notice(format!("spawn failed: {e}")));

@@ -80,15 +80,43 @@ const ESCAPE_TIME: &str = "set -g escape-time 10";
 /// 每次连接都会再追加一条，值会无限变长。
 const TRUECOLOR: &str = "set -g terminal-overrides \",*256col*:Tc\"";
 
-/// 原生 Windows Terminal 通过 ssh -t 通常给远端的是 xterm-256color；
-/// tmux 默认会把 pane 内改成 tmux-256color。Freebuff/OpenTUI 的终端能力判断
-/// 在这两种 TERM 下不是同一条路径，导致同样的鼠标点击在原生终端能用、嵌入终端
-/// 只能部分命中。让 agent 子进程看到和原生连接一致的 TERM，COLORTERM 补真彩色。
+/// pane 内 agent 的环境：TERM 对齐原生连接，COLORTERM 补真彩色。
+///
+/// ⚠️ 这里**只影响 pane 里的 agent**，对鼠标链路没有任何作用 —— 实测把 freebuff
+/// 放在 `tmux-256color` 和 `xterm-256color` 下跑，它输出的字节**完全相同**（23020
+/// 字节逐字节一致）。tmux 是否给客户端开鼠标看的是**客户端自己的 TERM**，见
+/// `SSH_CLIENT_ENV`。当初把它当成鼠标问题的修法是设错了层。
 const AGENT_TERM_PREFIX: &str = "env -u TERM_PROGRAM TERM=xterm-256color COLORTERM=truecolor";
 
 pub fn with_native_terminal_env(agent_cmd: &str) -> String {
     format!("{AGENT_TERM_PREFIX} {agent_cmd}")
 }
+
+/// ssh **客户端自身**的终端类型（不是 pane 内 agent 的那个）。
+///
+/// tmux 按「客户端 TERM」查 terminfo，决定要不要给这个客户端开鼠标。实测
+/// （main，tmux 3.4，pane 里跑真实的 freebuff，客户端只换 TERM 这一个变量）：
+///
+/// ```text
+/// 客户端 TERM       画面     鼠标使能序列
+/// xterm-256color    正常     \x1b[?1000h / 1002h / 1003h / 1006h 都发
+/// vt100/ansi/cygwin 正常     【一个都不发】—— 界面看着对，鼠标全死
+/// 空 / dumb         起不来   tmux 直接拒绝：open terminal failed:
+///                            terminal does not support clear
+/// ```
+///
+/// 鼠标使能序列一旦不发，整条鼠标链路就是死的：滚轮、hover、点击全无反应，而键盘
+/// 完全不受影响 —— 症状看起来就像「某个按钮点不了」。滚轮当初「所有会话都滚不动」
+/// 是同一个根，只是被「客户端直接下发 tmux 命令」绕过去了。
+///
+/// app 的 ssh 是 `Command::new("ssh")` 直接 spawn 的，TERM 继承自 app 进程；Windows
+/// 上通常为空或不可用的值。而原生 Windows Terminal 走 ssh -t 给远端的是
+/// xterm-256color —— 「WT 里点得开、app 里点不开」的差别就在这一处。
+///
+/// 显式钉成 xterm-256color：它描述的就是 xterm.js 的能力，也和 `AGENT_TERM_PREFIX`
+/// 里给 pane 内 agent 的值一致。顺带解决 TERM 为空时会话根本起不来的问题，并让
+/// 渲染不再依赖「用户是从哪个 shell 启动 app 的」。
+pub const SSH_CLIENT_ENV: [(&str, &str); 1] = [("TERM", "xterm-256color")];
 
 /// 为什么 `mouse` 和滚轮绑定要写成配置文件再 `source-file`，而不是内联几条 `tmux` 命令：
 /// 内联时参数要经 login shell **二次解析**，`'send-keys -M'` 里的空格会被拆成两个参数，
@@ -236,6 +264,15 @@ mod tests {
             with_native_terminal_env("freebuff --project"),
             "env -u TERM_PROGRAM TERM=xterm-256color COLORTERM=truecolor freebuff --project"
         );
+    }
+
+    #[test]
+    fn ssh_client_term_is_mouse_capable() {
+        // tmux 按**客户端 TERM** 查 terminfo 决定开不开鼠标：
+        // - xterm-256color 有 kmous，才会发 \x1b[?1000h/1002h/1003h/1006h
+        // - 空值 / dumb：tmux 直接拒绝起客户端（terminal does not support clear）
+        // - vt100 / ansi / cygwin：画面正常但鼠标使能一个都不发（实测）
+        assert_eq!(SSH_CLIENT_ENV, [("TERM", "xterm-256color")]);
     }
 
     #[test]
