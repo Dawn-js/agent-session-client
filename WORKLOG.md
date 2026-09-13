@@ -2,6 +2,57 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-13（滚轮第三次修复：改由客户端直接驱动 tmux）
+
+**为什么前两次没解决**
+
+用户反馈"还是无法滚动，只能看当前页面"。量了各会话状态：
+
+| 会话 | `alternate_on` | `history_size` |
+|---|---|---|
+| freebuff | **1** | **0** |
+| hermes / codebuddy / claude / 0 | 0 | 1913 / 1972 / 158 / 1913 |
+
+- **freebuff 永远滚不出历史**：它跑在 alternate screen，内容不进 tmux scrollback。这是 TUI 自身限制。
+- 但 hermes 有 1913 行历史，用户却说**所有会话**都滚不动，连 `Ctrl+b [` 也不行。
+
+**定位：tmux 侧是好的，坏在客户端到 tmux 的按键链路**
+
+用 pty 客户端实测（独立会话，不碰用户会话）：
+
+```text
+history_size = 4971 / prefix = C-b
+发 \x02[ 之后 pane_in_mode = 1      ← tmux 侧完全正常
+```
+
+所以 `Ctrl+b` 这类按键**到不了 tmux**。又试着用 Xvfb 跑真 GUI 复现，但
+**XTest 的合成点击在 WebKitGTK 里点不动按钮**（设了 `XSetInputFocus` 也不行），
+这条路没走通 —— 不过结论已经够用。
+
+**修法：绕开按键链路，客户端直接下发 tmux 命令**
+
+```text
+tmux copy-mode -t <session>; tmux send-keys -t <session> -X -N 3 scroll-up
+```
+
+走已有的长驻命令通道（`filechan`，文件面板一直在用），只依赖"能执行远端命令"。
+实测 `#{scroll_position}` 空 → 3 → 23。前端在 `attachCustomWheelEventHandler` 里
+接管滚轮（返回 false，不让 xterm 本地滚也不发远端），节流 80ms。
+
+**当前状态**
+
+- core `cargo test` 100 + shim 4；`cargo check` 0 warning；`npm test` 33；build 通过。
+- 滚轮现在不依赖前缀键，也不依赖 xterm 的鼠标上报。
+
+**踩过的坑（GUI 实测相关）**
+
+- `pkill -f "tauri dev"` 会匹配到**自己所在的 ssh 命令行**，把会话一起杀掉 ——
+  和 ledger 里 `pkill -f "Xvfb :99"` 是同款。要用 `ps -eo pid,comm` 按进程名筛。
+- 重复启动 `npx tauri dev` 会留下**多个窗口实例**，XTest 的点击落在上面那个上，
+  看起来像"点了没反应"。
+- **XTest 合成点击在 WebKitGTK 里不生效**（`XSetInputFocus` + `XRaiseWindow` 都试了），
+  截图只能看静态画面。要模拟交互得换别的注入方式。
+
 ## 2026-09-13（终端体验：搜索 / 链接 / 剪贴板 / 真彩色 / resize 防抖）
 
 **本次做了什么**
