@@ -67,6 +67,16 @@ const WHEEL_UP: &str =
 const WHEEL_DOWN: &str =
     "bind -n WheelDownPane if -Ft= '#{pane_in_mode}' 'send-keys -M' 'send-keys -M'";
 
+/// tmux 里的复制经 OSC 52 送到客户端剪贴板（配合前端的 clipboard addon）。
+const CLIPBOARD: &str = "set -g set-clipboard on";
+
+/// 默认 500ms：vim / TUI 里按 ESC 会发粘。
+const ESCAPE_TIME: &str = "set -g escape-time 10";
+
+/// `tmux-256color` 的 terminfo 里没有 RGB 能力（`infocmp` 实测为 0），
+/// 不补这一条 tmux 只会输出 256 色。双引号是给 tmux 解析用的。
+const TRUECOLOR: &str = "set -ga terminal-overrides \",*256col*:Tc\"";
+
 /// 为什么 `mouse` 和滚轮绑定要写成配置文件再 `source-file`，而不是内联几条 `tmux` 命令：
 /// 内联时参数要经 login shell **二次解析**，`'send-keys -M'` 里的空格会被拆成两个参数，
 /// tmux 直接报 `if-shell: too many arguments`（实测 exit=1）。写进配置文件则由 tmux
@@ -81,11 +91,14 @@ const WHEEL_DOWN: &str =
 /// 整条命令套在登录 shell 里跑 —— 原因见 `login_shell`。
 pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
     login_shell(&format!(
-        "printf '%s\\n' {mouse} {up} {down} > /tmp/asc-tmux.conf; \
+        "printf '%s\\n' {mouse} {clip} {esc} {tc} {up} {down} > /tmp/asc-tmux.conf; \
          tmux source-file /tmp/asc-tmux.conf; \
          tmux set -t {s} mouse on 2>/dev/null; \
          tmux new -As {s} {cmd}",
         mouse = shell_quote("set -g mouse on"),
+        clip = shell_quote(CLIPBOARD),
+        esc = shell_quote(ESCAPE_TIME),
+        tc = shell_quote(TRUECOLOR),
         up = shell_quote(WHEEL_UP),
         down = shell_quote(WHEEL_DOWN),
         s = shell_quote(session),
@@ -206,6 +219,18 @@ mod tests {
             !cmd.contains("mouse_any_flag"),
             "不能保留「pane 申请了就把滚轮转发给它」的判定：{cmd}"
         );
+    }
+
+    #[test]
+    fn tmux_config_carries_clipboard_keys_and_truecolor() {
+        // 这三条要跟着应用走，不能只活在某一台机器的 ~/.tmux.conf 里：
+        // - set-clipboard on：tmux 里复制经 OSC 52 进 Windows 剪贴板
+        // - escape-time 10：默认 500ms 会让 vim/TUI 里的 ESC 发粘
+        // - terminal-overrides Tc：tmux-256color 的 terminfo 里没有 RGB，不补就降级成 256 色
+        let cmd = build_remote_tmux_cmd("hermes-proj", "hermes chat");
+        assert!(cmd.contains("set-clipboard on"), "{cmd}");
+        assert!(cmd.contains("escape-time 10"), "{cmd}");
+        assert!(cmd.contains("Tc"), "真彩色 override 不能少：{cmd}");
     }
 
     #[test]

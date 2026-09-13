@@ -432,10 +432,67 @@ code {
   white-space: pre-wrap;
 }
 
+/* 终端容器：搜索框浮在它上面，所以这里要定位上下文。
+   注意别把搜索框放进 .terminal-host —— xterm 的 cleanup 会 replaceChildren 清掉它。 */
+.term-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .terminal-host {
   flex: 1;
   min-height: 0;
   padding: 4px 6px;
+}
+
+/* ---------- 终端内搜索 ---------- */
+
+.term-search {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+}
+
+.term-search input {
+  width: 180px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.term-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.term-search button {
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.term-search button:hover {
+  border-color: var(--accent);
 }
 
 .welcome {

@@ -1,6 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { contextMenuAction, shouldCopySelection } from "./terminalClipboard";
 import "@xterm/xterm/css/xterm.css";
 
@@ -77,9 +80,15 @@ const THEMES: Record<ThemeName, Record<string, string>> = {
   },
 };
 
+/** resize 抖动时只认最后一次。每次 resize 后端都会注入一遍 tmux 重绘序列。 */
+const RESIZE_DEBOUNCE_MS = 120;
+
 export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     const term = new XTerm({
@@ -97,9 +106,30 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
     });
     termRef.current = term;
     const fit = new FitAddon();
+    const search = new SearchAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
+    // tmux 的 set-clipboard on 会把复制结果发成 OSC 52，靠这个 addon 落到系统剪贴板
+    term.loadAddon(new ClipboardAddon());
+    term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        // Tauri 的 webview 里 window.open 常被拦；打不开就把链接复制走，
+        // 免得点了没反应（也省掉 opener 插件）
+        const opened = window.open(uri, "_blank");
+        if (!opened) void navigator.clipboard?.writeText(uri);
+      }),
+    );
+    searchRef.current = search;
     term.open(hostRef.current!);
     fit.fit();
+
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+        setSearchOpen(true);
+        return false; // 别让 xterm 把它当输入发出去
+      }
+      return true;
+    });
 
     term.onKey(({ key, domEvent }) => {
       // 有选区时 Ctrl+C / Cmd+C 是复制，不把 ETX 发给远端。
@@ -129,16 +159,22 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
     term.onData(onData);
     registerWriter((data) => term.write(data));
 
+    let resizeTimer: number | undefined;
     const ro = new ResizeObserver(() => {
-      fit.fit();
-      onResize(term.cols, term.rows);
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        fit.fit();
+        onResize(term.cols, term.rows);
+      }, RESIZE_DEBOUNCE_MS);
     });
     ro.observe(hostRef.current!);
 
     return () => {
+      window.clearTimeout(resizeTimer);
       ro.disconnect();
       term.dispose();
       termRef.current = null;
+      searchRef.current = null;
       // xterm 的 dispose 不摘掉它自己插入的 DOM。不清空的话，下一次挂载
       // （StrictMode 双挂载、或任何 effect 重跑）会往同一个容器里再插一棵树，
       // 两棵树叠着渲染 —— 看起来就是"每个字都重复一遍"。
@@ -152,47 +188,89 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
     if (termRef.current) termRef.current.options.theme = THEMES[theme];
   }, [theme]);
 
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setQuery("");
+    searchRef.current?.clearDecorations();
+    termRef.current?.focus();
+  };
+
+  const runSearch = (next: boolean) => {
+    if (!query) return;
+    if (next) searchRef.current?.findNext(query);
+    else searchRef.current?.findPrevious(query);
+  };
+
   return (
-    <div
-      ref={hostRef}
-      className="terminal-host"
-      // 文件面板拖过来的条目：把远端路径直接喂给远端 shell
-      onDragOver={(e) => {
-        // 不 preventDefault 浏览器就不认这是 drop 目标
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        const path = e.dataTransfer.getData("text/plain");
-        if (path) onData(path);
-      }}
-      // 右键：有选区就复制，没有选区就粘贴。
-      // 都是用户手势，WebView2 在这个前提下允许访问剪贴板。
-      onContextMenu={(e) => {
-        e.preventDefault();
-        const action = contextMenuAction(termRef.current?.hasSelection() ?? false);
-        if (action === "copy") {
-          const selection = termRef.current?.getSelection() ?? "";
-          const copy = selection ? navigator.clipboard?.writeText(selection) : undefined;
-          if (copy) {
-            void copy.catch(() => {
-              /* 没有剪贴板权限就静默忽略，不打断输入 */
-            });
+    <div className="term-wrap">
+      <div
+        ref={hostRef}
+        className="terminal-host"
+        // 文件面板拖过来的条目：把远端路径直接喂给远端 shell
+        onDragOver={(e) => {
+          // 不 preventDefault 浏览器就不认这是 drop 目标
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const path = e.dataTransfer.getData("text/plain");
+          if (path) onData(path);
+        }}
+        // 右键：有选区就复制，没有选区就粘贴。
+        // 都是用户手势，WebView2 在这个前提下允许访问剪贴板。
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const action = contextMenuAction(termRef.current?.hasSelection() ?? false);
+          if (action === "copy") {
+            const selection = termRef.current?.getSelection() ?? "";
+            const copy = selection ? navigator.clipboard?.writeText(selection) : undefined;
+            if (copy) {
+              void copy.catch(() => {
+                /* 没有剪贴板权限就静默忽略，不打断输入 */
+              });
+            }
+            return;
           }
-          return;
-        }
-        const paste = navigator.clipboard?.readText();
-        if (paste) {
-          void paste
-            .then((text) => {
-              if (text) onData(text);
-            })
-            .catch(() => {
-              /* 没有剪贴板权限就静默忽略，不打断输入 */
-            });
-        }
-      }}
-    />
+          const paste = navigator.clipboard?.readText();
+          if (paste) {
+            void paste
+              .then((text) => {
+                if (text) onData(text);
+              })
+              .catch(() => {
+                /* 没有剪贴板权限就静默忽略，不打断输入 */
+              });
+          }
+        }}
+      />
+
+      {searchOpen && (
+        <div className="term-search">
+          <input
+            autoFocus
+            value={query}
+            placeholder="搜索回滚缓冲"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (e.target.value) searchRef.current?.findNext(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") runSearch(!e.shiftKey);
+              else if (e.key === "Escape") closeSearch();
+            }}
+          />
+          <button title="上一个 (Shift+Enter)" onClick={() => runSearch(false)}>
+            ↑
+          </button>
+          <button title="下一个 (Enter)" onClick={() => runSearch(true)}>
+            ↓
+          </button>
+          <button title="关闭 (Esc)" onClick={closeSearch}>
+            ×
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

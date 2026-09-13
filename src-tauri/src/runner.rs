@@ -178,11 +178,16 @@ pub fn run_session(
                         break;
                     }
                     if let Some(size) = parse_resize_frame(&frame) {
-                        dims = size;
-                        let _ = pty.resize(dims.0, dims.1);
-                        // tmux 对 resize 只发差量重绘，首帧又是按 spawn 时的初始尺寸
-                        // 画的 —— 不强制全量重绘，旧尺寸的错字会永久留在屏上
-                        let _ = pty.write(session_core::reconnect::TMUX_REFRESH);
+                        // 尺寸没变就什么都不做：ResizeObserver 抖动会重复发同样的尺寸，
+                        // 每次都 resize + 注入一遍 refresh 序列，纯属浪费，还可能把
+                        // 序列漏进画面。
+                        if size != dims {
+                            dims = size;
+                            let _ = pty.resize(dims.0, dims.1);
+                            // tmux 对 resize 只发差量重绘，首帧又是按 spawn 时的初始
+                            // 尺寸画的 —— 不强制全量重绘，旧尺寸的错字会永久留在屏上
+                            let _ = pty.write(session_core::reconnect::TMUX_REFRESH);
+                        }
                         continue;
                     }
                     let _ = pty.write(&frame);
