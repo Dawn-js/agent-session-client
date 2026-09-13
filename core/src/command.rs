@@ -176,6 +176,27 @@ pub fn probe_outcome(code: i32, stdout: &str, stderr: &str) -> Result<String, St
     })
 }
 
+/// 滚轮滚动：先确保进 copy-mode，再在其中滚 N 行。
+///
+/// **为什么不走客户端按键**（`Ctrl+b [`）：那条链路要经过 xterm → IPC → PTY →
+/// ssh → tmux 客户端，而实测用户环境里这些按键**到不了 tmux**（tmux 侧本身正常：
+/// 用 pty 客户端发 `\x02[` 时 `pane_in_mode=1`）。走这条独立的命令通道就绕开了
+/// 整条链路，只依赖"能执行远端命令"这一件事（文件面板已经在用）。
+///
+/// 已在真实 tmux 上验证：`copy-mode` 后 `scroll-up` 让 `#{scroll_position}`
+/// 从空 → 3 → 23。
+///
+/// pane 在 alternate screen 时（freebuff 这类全屏 TUI）没有历史可滚，
+/// 此时命令仍会成功但看不出变化 —— 那是 TUI 自身的限制。
+pub fn build_scroll_cmd(session: &str, up: bool, lines: u32) -> String {
+    format!(
+        "tmux copy-mode -t {s} 2>/dev/null; tmux send-keys -t {s} -X -N {n} {dir}",
+        s = shell_quote(session),
+        n = lines,
+        dir = if up { "scroll-up" } else { "scroll-down" },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +243,22 @@ mod tests {
             !cmd.contains("mouse_any_flag"),
             "不能保留「pane 申请了就把滚轮转发给它」的判定：{cmd}"
         );
+    }
+
+    #[test]
+    fn builds_scroll_cmd_entering_copy_mode_first() {
+        let up = build_scroll_cmd("hermes", true, 3);
+        // 必须先 copy-mode，否则 send-keys -X 没有作用的模式
+        assert!(up.contains("tmux copy-mode -t 'hermes'"), "{up}");
+        assert!(up.contains("send-keys -t 'hermes' -X -N 3 scroll-up"), "{up}");
+        assert!(build_scroll_cmd("hermes", false, 3).contains("scroll-down"));
+    }
+
+    #[test]
+    fn scroll_cmd_quotes_hostile_session_names() {
+        // 会话名来自配置，可能带空格或引号 —— 不能直接拼进命令
+        let cmd = build_scroll_cmd("a b'c", true, 5);
+        assert!(cmd.contains("'a b'\\''c'"), "{cmd}");
     }
 
     #[test]

@@ -9,7 +9,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use session_core::agents::{build_probe_agents_cmd, parse_probe_agents_output, KNOWN_AGENTS};
-use session_core::command::{build_exec_argv, login_shell, probe_outcome, SshTarget};
+use session_core::command::{
+    build_exec_argv, build_scroll_cmd, login_shell, probe_outcome, SshTarget,
+};
 use session_core::config::{parse_config, resolve_target, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
@@ -467,6 +469,23 @@ pub async fn list_dir(
         })
         .collect();
     Ok(DirView { dir: listing.dir, entries })
+}
+
+/// 滚轮：直接下发 tmux 命令驱动 copy-mode，**不经过客户端按键**。
+///
+/// 用户环境里按键到不了 tmux（tmux 侧本身正常），所以滚轮改走这条独立命令通道。
+/// 理由与验证见 `command::build_scroll_cmd`。
+#[tauri::command]
+pub async fn scroll_session(
+    state: State<'_, AppState>,
+    host: String,
+    session: String,
+    up: bool,
+    lines: u32,
+) -> Result<(), String> {
+    exec_remote(&state, &host, build_scroll_cmd(&session, up, lines))
+        .await
+        .map(|_| ())
 }
 
 /// 探测某台主机上装了哪些已知 agent。

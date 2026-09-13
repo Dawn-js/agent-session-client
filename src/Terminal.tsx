@@ -13,6 +13,11 @@ interface Props {
   onData: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
   registerWriter: (write: (data: string) => void) => void;
+  /**
+   * 滚轮事件（true = 向上）。由上层直接下发 tmux 命令来滚动，不走终端按键 ——
+   * 用户环境里 Ctrl+b 之类的按键到不了 tmux，而 tmux 侧本身是好的。
+   */
+  onScroll?: (up: boolean) => void;
   theme: ThemeName;
 }
 
@@ -83,7 +88,7 @@ const THEMES: Record<ThemeName, Record<string, string>> = {
 /** resize 抖动时只认最后一次。每次 resize 后端都会注入一遍 tmux 重绘序列。 */
 const RESIZE_DEBOUNCE_MS = 120;
 
-export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
+export function Terminal({ onData, onResize, registerWriter, onScroll, theme }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -122,6 +127,14 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
     searchRef.current = search;
     term.open(hostRef.current!);
     fit.fit();
+
+    // 滚轮：不让 xterm 本地滚，也不发给远端，而是由上层直接命令 tmux 滚
+    // （返回 false = xterm 不处理这个事件）
+    term.attachCustomWheelEventHandler((ev) => {
+      if (!onScroll) return true;
+      onScroll(ev.deltaY < 0);
+      return false;
+    });
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
@@ -182,7 +195,7 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
     };
     // theme 不进依赖：换主题只是改配色，重建终端会丢掉整屏回滚历史
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onData, onResize, registerWriter]);
+  }, [onData, onResize, registerWriter, onScroll]);
 
   useEffect(() => {
     if (termRef.current) termRef.current.options.theme = THEMES[theme];

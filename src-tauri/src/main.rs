@@ -27,6 +27,7 @@ fn main() {
             commands::write_example_config,
             commands::save_config,
             commands::list_dir,
+            commands::scroll_session,
             commands::probe_agents,
             commands::list_ssh_hosts,
             commands::known_agents,

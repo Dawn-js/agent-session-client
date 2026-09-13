@@ -142,6 +142,26 @@ export default function App() {
     writerRef.current = write;
   }, []);
 
+  // hostOf 也要能稳定读到（onScroll 不能随它变化，否则终端会被重建）
+  const hostOfRef = useRef(hostOf);
+  useEffect(() => {
+    hostOfRef.current = hostOf;
+  }, [hostOf]);
+
+  // 滚轮直接命令 tmux 滚 copy-mode：用户环境里 Ctrl+b 这类按键到不了 tmux，
+  // 但"执行一条远端命令"这条路是通的（文件面板一直在用）。
+  const lastScrollAt = useRef(0);
+  const onScroll = useCallback((up: boolean) => {
+    const id = activeRef.current;
+    const host = id ? hostOfRef.current[id] : undefined;
+    if (!id || !host) return;
+    // 滚轮会连着触发，每次都是一个 ssh 往返，节流一下
+    const now = Date.now();
+    if (now - lastScrollAt.current < 80) return;
+    lastScrollAt.current = now;
+    void invoke("scroll_session", { host, session: id, up, lines: 3 });
+  }, []);
+
   const start = async (host: string, agent: string) => {
     setActionError(null);
     try {
@@ -318,6 +338,7 @@ export default function App() {
               onData={onData}
               onResize={onResize}
               registerWriter={registerWriter}
+              onScroll={onScroll}
               theme={theme}
             />
           </>
