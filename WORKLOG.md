@@ -2,6 +2,37 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-13（显示对齐 Windows Terminal + 修鼠标坐标偏移）
+
+**本次做了什么**
+
+- 用户要求"显示和终端预览一模一样"。查了他的 **Windows Terminal Preview** 配置
+  （`~/AppData/Local/Packages/Microsoft.WindowsTerminalPreview_*/LocalState/settings.json`）：
+  `profiles.defaults` 是**空的**、没有自定义 scheme → 基准就是 **WT 的出厂值**。
+- 按 WT 默认逐项对齐：字体 `Cascadia Mono`（本来就是）、**字号 16px**（WT 的 12pt，
+  pt→px 要 ×96/72）、**行高 1.0**、**字距 0**、**内边距 8px**、**隐藏滚动条**。
+- **深色盘整体换成 WT 默认的 Campbell**（官方值），并补 `selectionForeground` ——
+  WT 不定义它但实际按反色渲染，不补会白底白字。
+- **挂 `Unicode11Addon`**（需要 `allowProposedApi: true`）。
+
+**关于 freebuff 的「能选文件夹但点不了 open」**
+
+tmux 侧实测**完全正常**（pty 客户端发点击序列，pane 完整收到
+`^[[<0;10;5M^[[<0;10;5m`），所以不是 tmux 配置、也不是滚轮那套引入的
+（用户也判断"很早的版本就有"）。
+
+推断的根因：**xterm 默认按 Unicode 6 算字符宽度**，界面里一有中文/emoji 宽度就算错，
+鼠标坐标跟着**整体偏移** → 表现为"有的区域能点、有的点不到"。
+`Unicode11Addon` 换成 Unicode 11 的宽度表来对齐实际渲染的格子。
+
+⚠️ **这条是推断，未实测验证** —— 需要用户装上后确认 open 区域能否点击。
+若仍不行，下一步查 xterm 的鼠标坐标换算（`_mouseService.getMouseReportCoords`）。
+
+**当前状态**
+
+- `npm run build` 通过；`npm test` 33 passed；`cargo check` 通过。
+- 包 sha256 `f8c6067593f1dc7a83496a548d54fed064ee826b6382eb0cea838b852ed0e8ff`。
+
 ## 2026-09-13（滚轮第三次修复：改由客户端直接驱动 tmux）
 
 **为什么前两次没解决**
