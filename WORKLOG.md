@@ -2,6 +2,44 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-13（滚轮真因、待办面板、拖拽与关闭重连）
+
+**本次做了什么**
+
+- **滚轮无效的真因**：不是 `mouse` 没开（应用早就设了），而是 tmux 的**默认**
+  `WheelUpPane` 绑定在 pane 申请鼠标时（`#{mouse_any_flag}`）把滚轮**转发给 pane**。
+  freebuff / hermes 这类 TUI 申请了鼠标却不响应滚轮 —— 于是滚轮像坏了一样。
+  改成不判断 `mouse_any_flag`、一律由 tmux 进 copy-mode。
+  实测对照（pane 里发 `\033[?1000h` 模拟 TUI）：默认 `pane_in_mode=0`，覆盖后 `=1`。
+- **绑定必须走配置文件**：内联 `tmux bind ... if -Ft= '...' '...'` 活不过 login shell 的
+  二次解析 —— 参数里的空格被拆开，tmux 报 `if-shell: too many arguments`（实测 exit=1）。
+  改成 `printf` 写 `/tmp/asc-tmux.conf` 再 `tmux source-file`，由 tmux 自己解析引号。
+- **右侧「技能」页签改为「待办」**：localStorage 持久化、全局共用（不跟会话走）。
+  顺带删掉不再使用的 `list_skills` 命令与 core 的 skills 解析及其测试。
+- **修拖拽**：`tauri.conf.json` 补 `dragDropEnabled: false` —— Windows 上 Tauri 默认
+  拦截 HTML5 拖放，文件面板的 `onDrop` 从来没被触发过。
+- **修「关掉后连不上」**：`close_session` 发完 `__close` 就返回，而 runner 还要 kill PTY、
+  wait 子进程、清会话表；这期间重开同一会话会撞上 `start_session` 的重复保护。
+  现在等到会话表清掉（最多 5s）再返回。
+- **修「打字每个字重复」**：xterm 的 `dispose()` **不摘掉自己插入的 DOM**，而 `Terminal`
+  的 effect 依赖 `onData`（依赖 `active`），切会话就会重建 —— 新旧两棵树叠着渲染。
+  两处一起改：cleanup 里 `replaceChildren()` 清容器，`onData`/`onResize` 改用 ref 读
+  `active` 保持稳定（顺带不再切一次会话就重建终端）。
+
+**当前状态**
+
+- `cargo test`：97 passed（core）+ shim 4 passed；`cargo check` 0 warning；`npm test` 33 passed。
+- 用户的 `~/.tmux.conf` **由本次会话创建**（原来不存在）：`set -g mouse on`、
+  `set -g history-limit 50000`、两条 Wheel 绑定。已 `source-file`，7 个会话未受影响。
+
+**踩过的坑**
+
+- **两层 shell 解析会吃掉 tmux 的引号**：`shell_quote` 把整段包进单引号后，bash 的第二次
+  解析让 `'send-keys -M'` 变成未分组的两个参数。凡是给 tmux 传「带空格的参数」，
+  都得走配置文件，别内联。
+- 前面那版 `TMUX_REFRESH`（`\x02:refresh-client\r`）注入与此无关：它在 tmux 前缀键之后，
+  由 tmux 客户端消费，不会进 pane。
+
 ## 2026-09-13（修 freebuff「界面显示不全」：resize 后强制 tmux 全量重绘）
 
 **本次做了什么**

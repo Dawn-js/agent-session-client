@@ -51,19 +51,45 @@ pub fn login_shell(cmd: &str) -> String {
     format!("${{SHELL:-/bin/bash}} -lc {}", shell_quote(cmd))
 }
 
-/// 注意前面的 `set -g mouse on`：tmux 的 mouse 模式默认是关的，不开的话滚轮
-/// 事件在 tmux 里不产生任何滚动（只有 mouse on 时 tmux 才会进 copy-mode 翻历史）。
+/// 滚轮一律由 tmux 自己处理（进 copy-mode 翻历史），不转发给 pane。
 ///
-/// 代价：mouse on 之后 tmux 会接管鼠标拖拽选择，想用系统选区复制要按住 Shift。
-/// 不想要就在远端执行 `tmux set -g mouse off`。
+/// tmux 的**默认**绑定在 pane 申请鼠标时（`#{mouse_any_flag}`）会把滚轮**转发给
+/// pane**，而 freebuff / hermes 这类 TUI 申请了鼠标却不响应滚轮 —— 表现就是滚轮
+/// 完全没反应。改成不判断 `mouse_any_flag` 即可。
+///
+/// 实测对照（main，tmux 3.4，pane 里发 `\033[?1000h` 模拟 TUI 申请鼠标）：
+/// ```text
+/// 默认绑定:   pane_in_mode = 0   （滚轮被转给 pane，tmux 不管）
+/// 覆盖绑定后: pane_in_mode = 1   （tmux 接管，进 copy-mode）
+/// ```
+const WHEEL_UP: &str =
+    "bind -n WheelUpPane if -Ft= '#{pane_in_mode}' 'send-keys -M' 'copy-mode -e'";
+const WHEEL_DOWN: &str =
+    "bind -n WheelDownPane if -Ft= '#{pane_in_mode}' 'send-keys -M' 'send-keys -M'";
+
+/// 为什么 `mouse` 和滚轮绑定要写成配置文件再 `source-file`，而不是内联几条 `tmux` 命令：
+/// 内联时参数要经 login shell **二次解析**，`'send-keys -M'` 里的空格会被拆成两个参数，
+/// tmux 直接报 `if-shell: too many arguments`（实测 exit=1）。写进配置文件则由 tmux
+/// 自己解析引号，一次就位。
+///
+/// `set -t <session> mouse on` 是给**已有**会话补的：会话可能自己存了 `mouse off`，
+/// 会话级选项会盖过全局的。
+///
+/// 代价：mouse on 之后 tmux 会接管鼠标拖拽选择，想用系统选区复制要按住 Shift；
+/// pane 里真正想收滚轮的 TUI 会收不到（但它们本来也不响应）。
 ///
 /// 整条命令套在登录 shell 里跑 —— 原因见 `login_shell`。
 pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
     login_shell(&format!(
-        "tmux set -g mouse on; tmux set -t {} mouse on 2>/dev/null; tmux new -As {} {}",
-        shell_quote(session),
-        shell_quote(session),
-        shell_quote(agent_cmd)
+        "printf '%s\\n' {mouse} {up} {down} > /tmp/asc-tmux.conf; \
+         tmux source-file /tmp/asc-tmux.conf; \
+         tmux set -t {s} mouse on 2>/dev/null; \
+         tmux new -As {s} {cmd}",
+        mouse = shell_quote("set -g mouse on"),
+        up = shell_quote(WHEEL_UP),
+        down = shell_quote(WHEEL_DOWN),
+        s = shell_quote(session),
+        cmd = shell_quote(agent_cmd),
     ))
 }
 
@@ -160,9 +186,39 @@ mod tests {
         let cmd = build_remote_tmux_cmd("hermes-proj", "hermes chat");
         assert!(cmd.starts_with("${SHELL:-/bin/bash} -lc '"), "{cmd}");
         assert!(cmd.ends_with('\''), "{cmd}");
-        assert!(cmd.contains("tmux set -g mouse on"), "{cmd}");
+        // mouse 与滚轮绑定现在写在配置文件里再 source（见 WHEEL_UP 的说明）
+        assert!(cmd.contains("set -g mouse on"), "{cmd}");
+        assert!(cmd.contains("tmux source-file"), "{cmd}");
         assert!(cmd.contains("tmux set -t"), "{cmd}");
         assert!(cmd.contains("tmux new -As"), "{cmd}");
+    }
+
+    #[test]
+    fn wheel_is_routed_to_tmux_not_forwarded_to_the_pane() {
+        // tmux 的默认 WheelUpPane 绑定在 pane 申请鼠标时（#{mouse_any_flag}）会把
+        // 滚轮**转发给 pane**。freebuff / hermes 这类 TUI 申请了鼠标却不响应滚轮，
+        // 于是滚轮完全没反应 —— 必须覆盖成「无论 pane 是否申请，都由 tmux 处理」。
+        let cmd = build_remote_tmux_cmd("hermes-proj", "hermes chat");
+        assert!(cmd.contains("bind -n WheelUpPane"), "{cmd}");
+        assert!(cmd.contains("bind -n WheelDownPane"), "{cmd}");
+        assert!(cmd.contains("copy-mode -e"), "{cmd}");
+        assert!(
+            !cmd.contains("mouse_any_flag"),
+            "不能保留「pane 申请了就把滚轮转发给它」的判定：{cmd}"
+        );
+    }
+
+    #[test]
+    fn wheel_binding_goes_through_a_config_file_not_inline() {
+        // 内联的 `tmux bind ... if -Ft= '...' '...'` 活不过 login shell 的二次解析：
+        // 参数里的空格会被拆开，tmux 报 `if-shell: too many arguments`（实测 exit=1）。
+        // 只能写进配置文件让 tmux 自己解析引号 —— 所以这里要求走 source-file。
+        let cmd = build_remote_tmux_cmd("hermes-proj", "hermes chat");
+        assert!(cmd.contains("source-file"), "绑定必须经配置文件下发：{cmd}");
+        assert!(
+            cmd.contains("'#{pane_in_mode}'"),
+            "tmux 的引号必须原样落到配置内容里：{cmd}"
+        );
     }
 
     #[test]
