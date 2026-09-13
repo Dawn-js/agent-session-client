@@ -2,62 +2,56 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
-## 2026-09-13（鼠标在 app 里一个事件都没到：根因是 ssh 客户端的 TERM）
+## 2026-09-13（freebuff 的 Open 看得见却点不到：根因是双客户端把窗口顶掉了）
 
-**用户反馈**：freebuff 依旧点不了 Open（WT 里正常）。
+**用户反馈（原话，而且判断对了）**：「显示空间不够全，导致 open 点不到」。
 
-**先定住问题的形状**（用户观察，关键）：在 app 里把鼠标移到文件夹列表上（不点），
-行**完全不高亮** ⇒ 鼠标事件一个都没到 freebuff。而键盘是通的（能选文件夹）。所以
-不是「Open 位置太靠下」、也不是坐标偏移 —— 是整条鼠标链路断的；freebuff 的 Open
-只是唯一**必须**点鼠标的地方，所以只有它暴露。（滚轮当初「所有会话都滚不动」是同一
-个根，只是被「客户端直接下发 tmux 命令」绕过去了。）
+**根因**：tmux 默认 `window-size latest` —— 窗口尺寸跟**最后操作过的那个客户端**走。
+用户的 app 报给远端是 **87x33**，他在 Windows Terminal 里 attach 的是 **120x40**。
+WT 一操作，窗口变成 **120x39**，app 就只能看到这块面板的**左上角**：右侧文字被切断，
+picker 底部的 `Open` 落在可见区之外 —— 「在 WT 里看得见、在 app 里够不着」。
 
-**逐个排除（都是实测，不是推断）**：
+```
+window-size latest   -> window=120x39   app(80x34) 被裁，截图里右侧文字明显被切
+window-size smallest -> window=80x33    app 完整，Open 可见
+```
+
+**修法**：`command::WINDOW_SIZE = set -g window-size smallest`（谁都不被裁；只有一个
+客户端时与默认一致）。**已在服务器上先手动 `tmux set -g window-size smallest`**，
+用户当天就能用，不必等 CI 出包。
+
+**这一轮绕了很多弯（记下来别再走）**，逐个排除且全部实测为「正常」：
 
 | 假设 | 实测 | 结论 |
 |---|---|---|
-| TERM 影响 OpenTUI 的鼠标判断（上一个提交的依据） | freebuff 在 `tmux-256color` 与 `xterm-256color` 下输出**逐字节相同**（23020 字节） | 证伪 |
-| freebuff 用了 SGR-pixels(1016)，坐标被当像素用 | 它只启用 1000h/1002h/1003h/1006h，从不启用 1016 | 证伪 |
-| Unicode11 / 坐标换算（上上次的依据） | 真 Chromium + app 同款 xterm 配置/CSS，DPR 1/1.25/1.5/2，点**肉眼看到的 Open 文字** → 发出的都正好是 `\x1b[<0;86;38M`（第 37 行第 85 列，Open 所在格） | 证伪 |
-| 后端丢鼠标字节 | `write_session` 只丢 0x03/0x04/0x1A/0x1C，其余原样 FIFO | 证伪 |
-| 鼠标模式没开 | tmux 客户端流里 `1000h/1002h/1003h/1006h` 齐全，末态开启 | 排除 |
+| 坐标偏移 / Unicode11 | 真 Chromium + app 同款 xterm 配置/CSS，DPR 1/1.25/1.5/2，点肉眼看到的 Open 文字 → 发出的正好是 `\x1b[<0;86;38M` | 证伪 |
+| freebuff 用 SGR-pixels(1016) | 只启用 1000h/1002h/1003h/1006h | 证伪 |
+| 后端过滤鼠标字节 | 只丢 0x03/0x04/0x1A/0x1C，其余原样 FIFO | 证伪 |
+| tmux 不给客户端开鼠标 | 同 TERM/同尺寸的对照客户端**收到了** 1000h/1002h/1003h/1006h | 证伪 |
+| app 的输入通道是死的 | 方向键 `\x1b[A`、Esc、Tab、退格、字母**全部逐字节到达** | 证伪 |
+| ssh 客户端 TERM 不可用 | 用户那台传的就是 xterm-256color | 证伪（见下） |
 
-**根因**：tmux 按**客户端自己的 TERM** 查 terminfo 决定给不给这个客户端开鼠标。
+**真正定位的两次一击**：
 
-```text
-客户端 TERM            画面      鼠标使能序列
-xterm-256color         正常      都发
-vt100 / ansi / cygwin  正常      【一个都不发】 ← 界面看着对，鼠标全死
-空 / dumb              起不来    tmux 直接拒绝: open terminal failed:
-                                terminal does not support clear
-```
+1. 在服务器上跑 app（Xvfb）+ `ffmpeg` 截图 + **ctypes/libXtst 点那个绿色 Open 的真实
+   像素** → freebuff 从 picker 前进到模型页 ⇒ **app 的鼠标链路本身完全正常**。
+   （顺带推翻 ledger 里「XTest 在 WebKitGTK 点不动」那条：之前那次失败是**会话早已
+   不在 picker 那一屏**，被误读成了点击无效。）
+2. `tmux list-clients` 看到 app 是 87x33、WT 是 120x40，而 `window=120x39` ⇒ 就是它。
 
-app 的 ssh 是 `Command::new("ssh")` 直接 spawn 的，`TERM` 继承自 app 进程（Windows 上
-通常为空或不可用的值）；而原生 Windows Terminal 走 `ssh -t` 给远端的是
-`xterm-256color` —— **「WT 里点得开、app 里点不开」的差别就在这一处**。上一个提交
-方向对了但设错了层：`env TERM=xterm-256color` 只作用在 **pane 里的 agent**，
-tmux 看的是**客户端**。
+**两轮无效观察的教训**：freebuff 记住项目后不再显示 picker（`showProjectPicker` 的
+条件是 cwd 在 home 或不在项目里），会话那时早就在模型页 —— 用户「悬停没反应」「拖动
+能选中」都是在那一屏测的，不能用来推断鼠标模式。排查前先确认**屏幕上到底是哪一屏**。
 
-**修法**（`core/src/command.rs` + `core/src/transport.rs` + `src-tauri/src/runner.rs`）：
+**同批带上的真 bug（实测过，但不是本次根因）**：ssh **进程**的 TERM 继承自 app 进程，
+为空/dumb 时 tmux 直接拒绝起客户端（`open terminal failed: terminal does not support
+clear`）⇒ `command::SSH_CLIENT_ENV` + `PtySession::spawn_with_env` 把它钉成
+`xterm-256color`。
 
-- 新增 `SSH_CLIENT_ENV = [("TERM", "xterm-256color")]`，注释里写清实测数据。
-- `PtySession::spawn_with_env(argv, cols, rows, envs)`；runner 用它把 TERM 钉在
-  **ssh 进程**上（`spawn` 保留原样 = 空 env，其它调用点不受影响）。
-- 顺带修掉「从没有 TERM 的环境启动 app 时会话根本起不来」。
-- 更正 `AGENT_TERM_PREFIX` 的注释（它不影响鼠标，别再往那个方向找）。
+**验证**：core 105 + shim 4 passed（含 `window_size_fits_every_client`）；
+`cargo check -p agent-session-client` 0 warning；`npm test` 33 passed；`npm run build` 通过。
 
-**验证**：core 104 + shim 4 passed；`cargo check -p agent-session-client` 0 warning；
-`npm test` 33 passed；`npm run build` 通过。端到端（app 形状的 ssh 跑真实 freebuff）：
-钉住后远端 `client_termname=xterm-256color` 且 `1000h/1002h/1003h/1006h` 齐全、画面里
-有 `Open`/`Select project`；不钉住则 95 字节的 `terminal does not support clear`。
-
-**下一步**：请用户把 app 挂着（起 freebuff 会话），读一次
-`tmux list-clients -F '#{client_termname}'` 把「app 实际传的 TERM」记进 ledger，
-然后提交 + push 让 CI 出 Windows 包，装完在 app 里点一次 Open 收尾。
-
-**踩过的坑**：排查时误把 `strip_quit_keys`、`complete_utf8_prefix`、IPC 顺序当成嫌疑 ——
-鼠标上报是纯 ASCII，这四个字符与它无关；真正的分叉在**有没有鼠标使能序列**，
-而它由上表第一列的 TERM 决定。别再从坐标/字体/Unicode 入手。
+**下一步**：push → CI 出 Windows 包 → 用户装新版（或继续用服务器上已手动设好的选项）。
 
 ## 2026-09-13（继续：按 Freebuff/OpenTUI 源码查清环境差异）
 

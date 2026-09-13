@@ -225,37 +225,46 @@ npx tauri build       # 打包发布版（Linux 上会停在缺打包后端，�
       [print(a['browser_download_url'], a['digest']) for a in r['assets']]"
     ```
 
-21. **鼠标事件一个都到不了远端时，先查「客户端 TERM」，不要查坐标**。tmux 是按
-    **ssh 客户端自己的 TERM** 查 terminfo 决定要不要给这个客户端开鼠标的。实测
-    （main，tmux 3.4，pane 里跑真实 freebuff，客户端只换 TERM 一个变量）：
+21. **「某个按钮（例如 freebuff 的 Open）看得见却点不到」的第一嫌疑是
+    `window-size`，不是鼠标/坐标**。用户的原话是「显示空间不够全，导致 open 点不到」，
+    实测证明他判断对了。
+
+    **根因**：tmux 默认 `window-size latest` —— 窗口尺寸跟着**最后操作过的那个客户端**
+    走。用户的 app 是 `87x33`，而他在 Windows Terminal 里 attach 的是 `120x40`。
+    WT 一操作，窗口就变成 `120x39`，**app 只能看到这块面板的左上角**：右侧文字被切断、
+    picker 底部的 `Open` 落在可见区之外。于是「在 WT 里看得见、在 app 里够不着」。
 
     ```text
-    客户端 TERM        画面        鼠标使能序列 (\x1b[?1000h/1002h/1003h/1006h)
-    xterm-256color     正常        都发
-    vt100 / ansi / cygwin  正常    【一个都不发】 ← 界面看着完全对，鼠标全死
-    空 / dumb          起不来      tmux 直接拒绝: open terminal failed:
-                                  terminal does not support clear
+    window-size latest   -> window=120x39   app(80x34) 被裁，Open 不可见
+    window-size smallest -> window=80x33    app 完整，Open 可见可点
     ```
 
-    鼠标使能一旦不发，滚轮 / hover / 点击**全部**没反应，而键盘完全正常 —— 所以症状
-    长得像「某个按钮点不了」（freebuff 项目选择页的 Open 是唯一必须点鼠标的地方）。
-    "所有会话都滚不动"也是同一个根，当时被「客户端直接下发 tmux 命令」绕过去了。
+    **修法**：`set -g window-size smallest`（`command::WINDOW_SIZE`）—— 保证任何客户端
+    都不被裁，只有一个客户端时与默认行为一致。
 
-    **app 的 ssh 是 `Command::new("ssh")` 直接 spawn 的，TERM 继承自 app 进程**（Windows
-    上通常是空或不可用的值），而原生 Windows Terminal 走 `ssh -t` 给远端的是
-    `xterm-256color` —— 这就是「WT 里点得开、app 里点不开」的全部差别。修法是给 ssh
-    **进程**钉 TERM（`command::SSH_CLIENT_ENV` + `PtySession::spawn_with_env`），
-    不是给 pane 里的 agent 设 —— `AGENT_TERM_PREFIX` 那一层对鼠标没有任何作用
-    （实测 freebuff 在 tmux-256color / xterm-256color 下输出逐字节相同）。
-
-    **排查顺序**（可复现，不必开 GUI）：
+    **排查顺序**（这次踩了很多弯路，按这个顺序做，20 分钟能定位）：
     1. `tmux list-clients -F '#{client_termname} #{client_width}x#{client_height}'`
-       —— app 挂着时看它那个客户端的 TERM。
-    2. 用 pty 客户端跑一遍 app 的远端命令，抓输出里的 `\x1b[?\?1006h`：
-       没有就是这一条；有鼠标使能而仍然点不动，才轮到查坐标 / 编码。
-    3. 坐标那条线已经排除干净：xterm.js 的像素→格子换算在 DPR 1/1.25/1.5/2 下
-       点「肉眼看到的那串 Open 文字」都精确落在 Open 所在格（真 Chromium 实测），
-       freebuff 也从不启用 SGR-pixels(1016)。
+       + `tmux display -p -t <s> 'window=#{window_width}x#{window_height}'`
+       —— **窗口尺寸 ≠ app 客户端尺寸就是本条**，先别碰鼠标。
+    2. 确认 app 的鼠标链路本身是好的（这次是好的）：在服务器上跑 app（Xvfb），
+       用 `ffmpeg -f x11grab` 截图找按钮像素，再用 ctypes + `libXtst` 点一下，
+       看远端面板有没有前进。**XTest 合成点击在 WebKitGTK 里是能用的**（之前那条
+       「点不动」的结论是把「会话已经不在 picker 那一屏」误判成了点击无效）。
+    3. 坐标/编码这条线已彻底排除：xterm.js 的像素→格子换算在 DPR 1/1.25/1.5/2 下
+       点「肉眼看到的 Open 文字」都精确落在 Open 所在格（真 Chromium 实测）；
+       freebuff 从不启用 SGR-pixels(1016)。
+    4. **排查时先确认「屏幕上到底是哪一屏」**：freebuff 记住了项目就不再显示 picker
+       （`showProjectPicker` 的条件是 cwd 在 home 或不在项目里），会话早就前进到模型页
+       时，所有「悬停/点击 Open」的观察都是无效的 —— 这次有两轮结论是这样作废的。
+
+    **附带的两个真 bug（与本条无关，但都实测过）**：
+    - ssh **进程**的 TERM 继承自 app 进程，为空/dumb 时 tmux 直接拒绝起客户端
+      （`open terminal failed: terminal does not support clear`）⇒ 钉成
+      `xterm-256color`（`command::SSH_CLIENT_ENV` + `PtySession::spawn_with_env`）。
+      注意：**这不是 Open 点不到的根因** —— 用户那台 Windows 传的本来就是
+      xterm-256color（`tmux list-clients` 里看得到）。
+    - `AGENT_TERM_PREFIX`（给 pane 内 agent 设 TERM）对鼠标没有任何作用：
+      freebuff 在 `tmux-256color` / `xterm-256color` 下输出逐字节相同（23020 字节）。
 
 ## 约定
 
@@ -266,14 +275,13 @@ npx tauri build       # 打包发布版（Linux 上会停在缺打包后端，�
 ## 当前状态（2026-09-13）
 
 - 版本 `0.2.5`，分支 `master`。
-- 2026-09-13 修复（**待用户确认**）：**鼠标在 app 里完全无效**的根因 = ssh 客户端 TERM
-  不可用，tmux 因此不给客户端开鼠标（滚轮/hover/点击全死、键盘正常；freebuff 的 Open
-  是唯一必须点鼠标的地方所以只有它暴露）。修法见 ledger 21：
-  `core::command::SSH_CLIENT_ENV` + `PtySession::spawn_with_env`，把 ssh **进程**的
-  TERM 钉成 `xterm-256color`。本地已验证：钉住后远端 client TERM=xterm-256color 且
-  `1000h/1002h/1003h/1006h` 齐全；未钉住时 tmux 直接拒绝起客户端。
-  ⚠️ 同一提交里对 `AGENT_TERM_PREFIX` 的注释做了更正（它只影响 pane 内 agent，
-  对鼠标无作用 —— 实测 freebuff 在两种 TERM 下输出逐字节相同）。
+- 2026-09-13 修复：**「freebuff 的 Open 看得见却点不到」的根因是双客户端把窗口顶掉了**
+  （用户判断正确：显示空间不够全）。tmux 默认 `window-size latest` 跟着最后操作过的
+  客户端走 —— WT(120x40) 一操作，窗口变 120x39，app(87x33) 只能看到左上角，picker
+  底部的 Open 落在可见区之外。修法 `command::WINDOW_SIZE = set -g window-size smallest`。
+  已在服务器上先手动 `tmux set -g window-size smallest` 让用户当天就能用。
+  同批附带：`command::SSH_CLIENT_ENV`（ssh 进程的 TERM 钉成 xterm-256color，
+  解决 TERM 为空时 tmux 拒绝起客户端；**不是** Open 的根因）。详见 ledger 21。
 - 2026-09-13 变更：右侧「技能」页签**已删除**，改为「待办」（localStorage、全局共用，
   见 `src/todos.ts`）；`list_skills` 命令与 core 的 skills 解析已一并删除。
   同日修复：拖拽（`dragDropEnabled: false`）、关闭后无法重连（`close_session` 等表清空）、

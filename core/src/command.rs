@@ -106,17 +106,35 @@ pub fn with_native_terminal_env(agent_cmd: &str) -> String {
 /// ```
 ///
 /// 鼠标使能序列一旦不发，整条鼠标链路就是死的：滚轮、hover、点击全无反应，而键盘
-/// 完全不受影响 —— 症状看起来就像「某个按钮点不了」。滚轮当初「所有会话都滚不动」
-/// 是同一个根，只是被「客户端直接下发 tmux 命令」绕过去了。
+/// 完全不受影响 —— 症状看起来就像「某个按钮点不了」。
 ///
-/// app 的 ssh 是 `Command::new("ssh")` 直接 spawn 的，TERM 继承自 app 进程；Windows
-/// 上通常为空或不可用的值。而原生 Windows Terminal 走 ssh -t 给远端的是
-/// xterm-256color —— 「WT 里点得开、app 里点不开」的差别就在这一处。
+/// **注意**：这条**不是**用户那次「Open 点不到」的根因 —— 实测他那台 Windows 的
+/// app 传给远端的 TERM 本来就是 `xterm-256color`（`tmux list-clients` 里看得到），
+/// 真正的根因是窗口尺寸被别的客户端顶掉（见 `WINDOW_SIZE`）。这条只是把「TERM 继承
+/// 自 app 进程」这个不确定性钉死：TERM 为空/dumb 时 tmux 会直接拒绝起客户端
+/// （`open terminal failed: terminal does not support clear`），也就是从没有 TERM
+/// 的环境启动 app 时会话根本起不来。
 ///
 /// 显式钉成 xterm-256color：它描述的就是 xterm.js 的能力，也和 `AGENT_TERM_PREFIX`
-/// 里给 pane 内 agent 的值一致。顺带解决 TERM 为空时会话根本起不来的问题，并让
-/// 渲染不再依赖「用户是从哪个 shell 启动 app 的」。
+/// 里给 pane 内 agent 的值一致。
 pub const SSH_CLIENT_ENV: [(&str, &str); 1] = [("TERM", "xterm-256color")];
+
+/// 多个客户端挂在同一个会话上时，窗口尺寸按「能容纳所有客户端」算。
+///
+/// tmux 默认 `window-size latest`：窗口跟着**最后操作过的那个客户端**走。用户的 app
+/// 是 87x33，而他在 Windows Terminal 里 attach 的是 120x40 —— WT 一操作，窗口就变成
+/// 120x39，app 只能看到这块面板的**左上角**（实测截图：右侧文字被切掉、picker 底部的
+/// `Open` 直接落在可见区之外）。表现就是用户说的：
+/// **「显示空间不够全，导致 Open 点不到」** —— 在 WT 里看得见、在 app 里够不着。
+///
+/// `smallest` 保证任何客户端都不会被裁（多出来的地方留白）；只有一个客户端时与默认
+/// 行为完全一致。实测（main，tmux 3.4，app 80x34 + 模拟 WT 的 120x40 客户端）：
+///
+/// ```text
+/// window-size latest   -> window=120x39   app 被裁，Open 不可见
+/// window-size smallest -> window=80x33    app 完整，Open 可见可点
+/// ```
+const WINDOW_SIZE: &str = "set -g window-size smallest";
 
 /// 为什么 `mouse` 和滚轮绑定要写成配置文件再 `source-file`，而不是内联几条 `tmux` 命令：
 /// 内联时参数要经 login shell **二次解析**，`'send-keys -M'` 里的空格会被拆成两个参数，
@@ -132,11 +150,12 @@ pub const SSH_CLIENT_ENV: [(&str, &str); 1] = [("TERM", "xterm-256color")];
 /// 整条命令套在登录 shell 里跑 —— 原因见 `login_shell`。
 pub fn build_remote_tmux_cmd(session: &str, agent_cmd: &str) -> String {
     login_shell(&format!(
-        "printf '%s\\n' {mouse} {clip} {esc} {tc} {up} {down} > /tmp/asc-tmux.conf; \
+        "printf '%s\\n' {mouse} {winsz} {clip} {esc} {tc} {up} {down} > /tmp/asc-tmux.conf; \
          tmux source-file /tmp/asc-tmux.conf; \
          tmux set -t {s} mouse on 2>/dev/null; \
          tmux new -As {s} {cmd}",
         mouse = shell_quote("set -g mouse on"),
+        winsz = shell_quote(WINDOW_SIZE),
         clip = shell_quote(CLIPBOARD),
         esc = shell_quote(ESCAPE_TIME),
         tc = shell_quote(TRUECOLOR),
@@ -297,6 +316,15 @@ mod tests {
         assert!(cmd.contains("tmux source-file"), "{cmd}");
         assert!(cmd.contains("tmux set -t"), "{cmd}");
         assert!(cmd.contains("tmux new -As"), "{cmd}");
+    }
+
+    #[test]
+    fn window_size_fits_every_client() {
+        // 默认 latest 会跟着「最后操作过的客户端」走：WT 是 120x40、app 是 87x33，
+        // 窗口一变 120x39，app 就只能看到左上角 —— picker 底部的 Open 落在可见区之外，
+        // 用户的原话是「显示空间不够全，导致 Open 点不到」。smallest 让谁都不被裁。
+        let cmd = build_remote_tmux_cmd("freebuff", "freebuff");
+        assert!(cmd.contains("set -g window-size smallest"), "{cmd}");
     }
 
     #[test]
