@@ -311,7 +311,10 @@ export default function App() {
                 notices.map((n, i) => <div key={i}>{n}</div>)
               )}
             </div>
+            {/* key 绑到会话 id：切换会话要换一个终端实例，否则上一个会话的画面
+                会留在屏上，新会话的输出直接叠上去 */}
             <Terminal
+              key={active}
               onData={onData}
               onResize={onResize}
               registerWriter={registerWriter}
