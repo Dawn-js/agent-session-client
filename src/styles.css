@@ -441,10 +441,19 @@ code {
   display: flex;
 }
 
+/* 内边距对齐 Windows Terminal 的默认（8px），并且 WT 默认不显示滚动条 */
 .terminal-host {
   flex: 1;
   min-height: 0;
-  padding: 4px 6px;
+  padding: 8px;
+}
+
+.terminal-host .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.terminal-host .xterm-viewport::-webkit-scrollbar {
+  display: none;
 }
 
 /* ---------- 终端内搜索 ---------- */

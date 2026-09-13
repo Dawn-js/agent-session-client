@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { contextMenuAction, shouldCopySelection } from "./terminalClipboard";
 import "@xterm/xterm/css/xterm.css";
 
@@ -22,43 +23,52 @@ interface Props {
 }
 
 /**
- * 等宽字体栈。Cascadia Mono / Consolas 在 Windows 上比 xterm 默认的
- * `courier-new` 清晰得多 —— 后者笔画细、小字号下发虚，是"字体不清晰"的根因。
+ * 等宽字体栈。**顺序对齐 Windows Terminal 的默认**：WT 默认字体就是
+ * Cascadia Mono，后面几项是它找不到时的退路。
  */
 const FONT_FAMILY =
   '"Cascadia Mono", "Cascadia Code", Consolas, "JetBrains Mono", ui-monospace, ' +
   "SFMono-Regular, Menlo, monospace";
 
 /**
- * 两套配色都要对齐各自的 `--bg-panel`（深色 #171a23 / 浅色 #ffffff），
- * 并且 16 色 ANSI 全部按底色重定过。
+ * 字号 / 行高 / 字距都按 **Windows Terminal 的默认**来，目标是两边显示一模一样。
  *
- * xterm 的默认调色板是给纯黑背景调的，直接用在深蓝灰面板上会整体发灰；
- * 深色盘原样搬到白底上则前景/背景对比度不够 —— 两套都不能省。
+ * WT 的 `fontSize` 单位是 **pt**，默认 12pt；xterm 用 px，12pt × 96/72 = **16px**。
+ * 行高用 xterm 的默认 1.0（WT 也不加额外行距），字距 0（WT 默认无额外字距）。
+ */
+const FONT_SIZE = 16;
+const LINE_HEIGHT = 1.0;
+const LETTER_SPACING = 0;
+
+/**
+ * 深色盘 = **Windows Terminal 的默认配色 Campbell**，原样照搬（官方值），
+ * 这样和用户的 WT 显示效果一致。WT 默认不设 selectionForeground，
+ * 但实际是反色渲染，所以这里补上深色前景，否则选中会白底白字。
  */
 const THEMES: Record<ThemeName, Record<string, string>> = {
   dark: {
-    background: "#171a23",
-    foreground: "#e6e8ef",
-    cursor: "#5b8cff",
-    cursorAccent: "#171a23",
-    selectionBackground: "#33406b",
-    black: "#2a2f3f",
-    red: "#ff6b6b",
-    green: "#4ecb8d",
-    yellow: "#e0b341",
-    blue: "#5b8cff",
-    magenta: "#c58cff",
-    cyan: "#4fc3d9",
-    white: "#c8cede",
-    brightBlack: "#7c86a0",
-    brightRed: "#ff8a8a",
-    brightGreen: "#6fe0a8",
-    brightYellow: "#f0c862",
-    brightBlue: "#8fb2ff",
-    brightMagenta: "#d9a8ff",
-    brightCyan: "#72d9ea",
-    brightWhite: "#f2f4fa",
+    background: "#0c0c0c",
+    foreground: "#cccccc",
+    cursor: "#ffffff",
+    cursorAccent: "#0c0c0c",
+    selectionBackground: "#ffffff",
+    selectionForeground: "#0c0c0c",
+    black: "#0c0c0c",
+    red: "#c50f1f",
+    green: "#13a10e",
+    yellow: "#c19c00",
+    blue: "#0037da",
+    magenta: "#881798",
+    cyan: "#3a96dd",
+    white: "#cccccc",
+    brightBlack: "#767676",
+    brightRed: "#e74856",
+    brightGreen: "#16c60c",
+    brightYellow: "#f9f1a5",
+    brightBlue: "#3b78ff",
+    brightMagenta: "#b4009e",
+    brightCyan: "#61d6d6",
+    brightWhite: "#f2f2f2",
   },
   light: {
     background: "#ffffff",
@@ -99,21 +109,28 @@ export function Terminal({ onData, onResize, registerWriter, onScroll, theme }: 
     const term = new XTerm({
       convertEol: false,
       scrollback: 5000,
-      fontSize: 13.5,
+      fontSize: FONT_SIZE,
       fontFamily: FONT_FAMILY,
       fontWeight: 400,
       fontWeightBold: 600,
-      lineHeight: 1.32,
-      letterSpacing: 0.2,
+      lineHeight: LINE_HEIGHT,
+      letterSpacing: LETTER_SPACING,
       cursorBlink: true,
       cursorStyle: "bar",
       theme: THEMES[theme],
+      // Unicode11Addon 要求打开 proposed API
+      allowProposedApi: true,
     });
     termRef.current = term;
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
+    // xterm 默认按 Unicode 6 算字符宽度。界面里一有中文/emoji，宽度就算错，
+    // 鼠标坐标跟着整体偏移 —— 表现是"有的区域能点、有的点不到"。
+    // 挂上 Unicode 11 的宽度表才对得上终端里实际渲染的格子。
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = "11";
     // tmux 的 set-clipboard on 会把复制结果发成 OSC 52，靠这个 addon 落到系统剪贴板
     term.loadAddon(new ClipboardAddon());
     term.loadAddon(
