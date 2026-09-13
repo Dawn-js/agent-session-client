@@ -44,6 +44,16 @@ tmux copy-mode -t <session>; tmux send-keys -t <session> -X -N 3 scroll-up
 - core `cargo test` 100 + shim 4；`cargo check` 0 warning；`npm test` 33；build 通过。
 - 滚轮现在不依赖前缀键，也不依赖 xterm 的鼠标上报。
 
+**紧随其后的回归：滚完就卡在 copy-mode，无法输入**
+
+用户反馈"hermes 能滑动了但无法输入，codebuddy 正常"。查 `pane_in_mode`：
+**hermes=1**、codebuddy=0 —— 是我上一版引入的：滚动命令进了 copy-mode 却**没设
+`-e`**（滚到底自动退出），用户滚完就永久留在 copy-mode 里，键盘输入全被它吃掉。
+（`scroll_position=0` 说明已经在底部却仍不退出，正是缺 `-e` 的特征。）
+
+修法是命令里加 `-e`：`tmux copy-mode -e -t <session>`。实测独立会话：
+向上滚 5 行 `mode=1 pos=5`，滚回底部 `mode=0`（自动退出）。
+
 **踩过的坑（GUI 实测相关）**
 
 - `pkill -f "tauri dev"` 会匹配到**自己所在的 ssh 命令行**，把会话一起杀掉 ——
