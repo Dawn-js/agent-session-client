@@ -139,6 +139,10 @@ export function Terminal({ onData, onResize, registerWriter, theme }: Props) {
       ro.disconnect();
       term.dispose();
       termRef.current = null;
+      // xterm 的 dispose 不摘掉它自己插入的 DOM。不清空的话，下一次挂载
+      // （StrictMode 双挂载、或任何 effect 重跑）会往同一个容器里再插一棵树，
+      // 两棵树叠着渲染 —— 看起来就是"每个字都重复一遍"。
+      hostRef.current?.replaceChildren();
     };
     // theme 不进依赖：换主题只是改配色，重建终端会丢掉整屏回滚历史
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -40,8 +40,6 @@ export default function App() {
   // 会话 id -> host。文件面板要知道当前会话连的是哪台机器，
   // 但 id 是按 agent 命名的（见 start_session），host 只能在这里记下来。
   const [hostOf, setHostOf] = useState<Record<string, string>>({});
-  // 会话 id -> agent id。技能页要去 `~/.<agent>/skills` 找，同样从 id 里读不出来。
-  const [agentOf, setAgentOf] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(true);
@@ -122,19 +120,23 @@ export default function App() {
     };
   }, [active]);
 
-  const onData = useCallback(
-    (data: string) => {
-      if (active) void invoke("write_session", { id: active, data });
-    },
-    [active],
-  );
+  // 用 ref 读 active，让下面两个回调保持稳定：它们进 Terminal 的 effect 依赖，
+  // 一旦随 active 变化就会重建 xterm —— 而 xterm 的 dispose 不摘自己插入的 DOM，
+  // 重建出来的新实例会和残留的旧实例叠在一起（屏幕上的字看着像重影）。
+  const activeRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
-  const onResize = useCallback(
-    (cols: number, rows: number) => {
-      if (active) void invoke("resize_session", { id: active, cols, rows });
-    },
-    [active],
-  );
+  const onData = useCallback((data: string) => {
+    const id = activeRef.current;
+    if (id) void invoke("write_session", { id, data });
+  }, []);
+
+  const onResize = useCallback((cols: number, rows: number) => {
+    const id = activeRef.current;
+    if (id) void invoke("resize_session", { id, cols, rows });
+  }, []);
 
   const registerWriter = useCallback((write: (data: string) => void) => {
     writerRef.current = write;
@@ -145,7 +147,6 @@ export default function App() {
     try {
       const id = await invoke<string>("start_session", { host, agent, project: "" });
       setHostOf((prev) => ({ ...prev, [id]: host }));
-      setAgentOf((prev) => ({ ...prev, [id]: agent }));
       // 重新开始同一个 id：撤掉墓碑，否则它的事件会被当成已关闭而丢弃
       closedRef.current.delete(id);
       setSessions((prev) => applyState(prev, id, "connecting"));
@@ -333,10 +334,7 @@ export default function App() {
       </main>
 
       {filesOpen && (
-        <FilePanel
-          host={active ? hostOf[active] ?? null : null}
-          agent={active ? agentOf[active] ?? null : null}
-        />
+        <FilePanel host={active ? hostOf[active] ?? null : null} />
       )}
 
       {settingsOpen && config && (

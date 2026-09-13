@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -13,7 +14,7 @@ use session_core::config::{parse_config, resolve_target, validate};
 use session_core::discovery::{
     example_config_json, load_from_candidates, unique_paths, LoadOutcome,
 };
-use session_core::files::{build_list_cmd, build_skills_cmd, join_path, parse_listing, parse_skills_output};
+use session_core::files::{build_list_cmd, join_path, parse_listing};
 use session_core::reconnect::CLOSE_FRAME;
 use session_core::session::SessionState;
 use session_core::ssh_config::parse_ssh_config;
@@ -405,9 +406,25 @@ pub fn close_session(state: State<AppState>, id: String, kill_remote: bool) -> R
     if let Some(flag) = state.runners.lock().unwrap().get(&id) {
         flag.store(kill_remote, std::sync::atomic::Ordering::SeqCst);
     }
-    let guard = state.inputs.lock().unwrap();
-    let tx = guard.get(&id).ok_or_else(|| format!("unknown session: {id}"))?;
-    tx.send(CLOSE_FRAME.to_vec()).map_err(|e| e.to_string())
+    {
+        let guard = state.inputs.lock().unwrap();
+        let tx = guard.get(&id).ok_or_else(|| format!("unknown session: {id}"))?;
+        tx.send(CLOSE_FRAME.to_vec()).map_err(|e| e.to_string())?;
+    }
+
+    // runner 的收尾是异步的：它要先 kill PTY、wait 子进程，消息泵线程才清会话表。
+    // 不等它清完就返回，用户马上重开同一个会话会撞上 start_session 的重复保护
+    // （"session already running"）—— 表现就是"关掉之后再也连不上"。
+    // 锁必须在等待前释放，否则 runner 的清理线程拿不到 inputs 锁。
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while state.runners.lock().unwrap().contains_key(&id) {
+        if Instant::now() >= deadline {
+            // 兜底：真卡住了也不能把前端挂死，让它照旧报 already running
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -450,30 +467,6 @@ pub async fn list_dir(
         })
         .collect();
     Ok(DirView { dir: listing.dir, entries })
-}
-
-#[derive(Serialize)]
-pub struct SkillView {
-    pub name: String,
-    pub description: String,
-}
-
-/// 列某个 agent 已安装的 skill（不是随 agent 预装的那批）。
-///
-/// 目录约定为 `~/.<agent>/skills`，`agent` 直接来自配置里的 id，所以没有硬编码映射表。
-/// 认不出来的 agent 会返回空列表而不是报错 —— 面板显示「未找到」比弹错误合适。
-#[tauri::command]
-pub async fn list_skills(
-    state: State<'_, AppState>,
-    host: String,
-    agent: String,
-) -> Result<Vec<SkillView>, String> {
-    // agent 会被 quote_dir 整体加引号，拼进路径不会造成注入
-    let stdout = exec_remote(&state, &host, build_skills_cmd(&format!("~/.{agent}/skills"))).await?;
-    Ok(parse_skills_output(&stdout)
-        .into_iter()
-        .map(|s| SkillView { name: s.name, description: s.description })
-        .collect())
 }
 
 /// 探测某台主机上装了哪些已知 agent。
