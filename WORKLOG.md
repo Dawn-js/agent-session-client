@@ -2,6 +2,37 @@
 
 > 倒序排列，最新在顶部。每次会话收工前更新（见 AGENTS.md「收工规矩」）。
 
+## 2026-09-14（✕ 改为真正结束会话：销毁远端 tmux）
+
+**用户诉求**：打开一个 agent 连接后它就一直在，没法主动关掉；想让 ✕ 直接 kill 掉进程。
+副作用是「窗口内容非常多」—— 远端 tmux 不销毁，scrollback 越攒越多，重新打开时旧输出全刷回来。
+
+**根因**
+
+`App.tsx` 的 `closeSession` 里**硬编码**了 `killRemote: false`：
+
+```ts
+await invoke("close_session", { id, killRemote: false });
+```
+
+所以 ✕ 只断本地 ssh，远端 tmux 和里面的 agent 进程原地不动。而后端 `runner.rs` 的
+`kill_remote_session()`（`tmux kill-session -t <session>`）**早就写好了**，
+`finish_close` 也会按 `kill_remote_on_close` 标志调用它 —— 只是前端从来没置过这个标志，
+整条链路是死代码。设计文档里写的「只有显式『结束会话』才 kill」从没做出来过。
+
+**改动**
+
+1. `App.tsx`：`killRemote: false` → `true`，按钮文案改为「结束会话（销毁远端 tmux 会话
+   及其中运行的 agent 进程）」。断开与结束合并成一个动作，不再保留「断开后接回来」。
+2. `runner.rs` 的 `GiveUp` 分支补一次 kill：这条分支原本发完 `Exited` 就直接返回、
+   不调 `finish_close`，而会话表随即被清空、`close_session` 再也够不着 runner ——
+   用户在退避期间点关闭的话远端 tmux 会永久留下。只补 kill，不覆盖已发出的 `Exited`。
+
+**取舍（已与用户确认）**：✕ 直接 kill，不做「断开 / 结束」双按钮。
+代价是失去「关掉之后再开还能接回同一会话」。**断网自动重连不受影响** —— 那条走
+runner 的重试循环，不经过 `close_session`。
+
+**验证**：`npm run build` 通过。
 ## 2026-09-13（freebuff 的 Open 看得见却点不到：根因是双客户端把窗口顶掉了）
 
 **用户反馈（原话，而且判断对了）**：「显示空间不够全，导致 open 点不到」。

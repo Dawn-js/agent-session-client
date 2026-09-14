@@ -181,8 +181,9 @@ export default function App() {
     // 不挡住的话 applyState 会把刚关掉的行又加回来。
     closedRef.current.add(id);
     try {
-      // 只断开本地 ssh，远端 tmux 会话保留，之后还能接回来
-      await invoke("close_session", { id, killRemote: false });
+      // 结束会话 = 连远端 tmux 一起销毁（tmux kill-session），不留残留进程。
+      // 下次再开是全新会话，不会被上一次的输出刷屏。
+      await invoke("close_session", { id, killRemote: true });
     } catch {
       // runner 已经 give-up 时后端已清表，会报 unknown session —— 那本来就是关掉的会话
     }
@@ -253,8 +254,8 @@ export default function App() {
                   {/* 关闭按钮必须是兄弟节点：button 里不能再套 button */}
                   <button
                     className="session-close"
-                    aria-label="关闭会话"
-                    title="关闭会话（仅断开本地连接，远端 tmux 会话保留）"
+                    aria-label="结束会话"
+                    title="结束会话（销毁远端 tmux 会话及其中运行的 agent 进程）"
                     onClick={() => void closeSession(s.id)}
                   >
                     ✕

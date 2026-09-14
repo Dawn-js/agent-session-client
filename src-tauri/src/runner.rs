@@ -234,6 +234,12 @@ pub fn run_session(
             }
             RetryDecision::GiveUp => {
                 let _ = tx.send(RunnerMsg::State(SessionState::Exited));
+                // 用户可能是在退避期间点的关闭：这条分支原本不收尾，而会话表随即
+                // 被清空、close_session 再也够不着 runner，远端 tmux 就永久留下了。
+                // 这里只补一次 kill，不覆盖上面发出的 Exited 状态。
+                if kill_remote_on_close.load(Ordering::SeqCst) {
+                    kill_remote_session(&target, &session);
+                }
                 return;
             }
         }
