@@ -145,6 +145,27 @@ export function Terminal({ onData, onResize, registerWriter, onScroll, theme }: 
     term.open(hostRef.current!);
     fit.fit();
 
+    // 将高频输出合并到下一帧再写入 xterm，减少 Tauri 事件洪峰下的 parser/render 调用。
+    // 只保留当前帧内的字节，不缓存跨帧输出，也不改变远端 tmux 的事实源语义。
+    let outputQueue = "";
+    let outputFrame: number | undefined;
+    let disposed = false;
+    const flushOutput = () => {
+      outputFrame = undefined;
+      if (disposed || !outputQueue) return;
+      const data = outputQueue;
+      outputQueue = "";
+      term.write(data);
+      if (outputQueue) outputFrame = window.requestAnimationFrame(flushOutput);
+    };
+    const writeOutput = (data: string) => {
+      if (disposed || !data) return;
+      outputQueue += data;
+      if (outputFrame === undefined) {
+        outputFrame = window.requestAnimationFrame(flushOutput);
+      }
+    };
+
     // 滚轮：不让 xterm 本地滚，也不发给远端，而是由上层直接命令 tmux 滚
     // （返回 false = xterm 不处理这个事件）
     term.attachCustomWheelEventHandler((ev) => {
@@ -187,7 +208,7 @@ export function Terminal({ onData, onResize, registerWriter, onScroll, theme }: 
       }
     });
     term.onData(onData);
-    registerWriter((data) => term.write(data));
+    registerWriter(writeOutput);
 
     let resizeTimer: number | undefined;
     const ro = new ResizeObserver(() => {
@@ -200,6 +221,11 @@ export function Terminal({ onData, onResize, registerWriter, onScroll, theme }: 
     ro.observe(hostRef.current!);
 
     return () => {
+      disposed = true;
+      if (outputFrame !== undefined) {
+        window.cancelAnimationFrame(outputFrame);
+      }
+      outputQueue = "";
       window.clearTimeout(resizeTimer);
       ro.disconnect();
       term.dispose();
