@@ -335,8 +335,20 @@ button {
   font: inherit;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .row {
@@ -972,7 +984,22 @@ code {
   color: var(--text-muted);
 }
 
-/* ---------- scrollbars ---------- */
+@media (max-width: 900px) {
+  .sidebar {
+    width: 232px;
+  }
+
+  .files {
+    width: 220px;
+  }
+}
+
+@media (max-width: 720px) {
+  .files {
+    display: none;
+  }
+}
+
 
 ::-webkit-scrollbar {
   width: 10px;

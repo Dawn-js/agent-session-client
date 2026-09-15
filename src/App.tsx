@@ -101,7 +101,7 @@ export default function App() {
     });
     const unlistenNotice = listen<{ id: string; message: string }>("session-notice", (e) => {
       if (closedRef.current.has(e.payload.id)) return;
-      setNotices((prev) => [...prev, `${e.payload.id}: ${e.payload.message}`]);
+      setNotices((prev) => [...prev, `${e.payload.id}: ${e.payload.message}`].slice(-50));
     });
     return () => {
       unlisten.then((f) => f());
@@ -170,6 +170,7 @@ export default function App() {
       // 重新开始同一个 id：撤掉墓碑，否则它的事件会被当成已关闭而丢弃
       closedRef.current.delete(id);
       setSessions((prev) => applyState(prev, id, "connecting"));
+      setNotices([]);
       setActive(id);
     } catch (error) {
       setActionError(String(error));

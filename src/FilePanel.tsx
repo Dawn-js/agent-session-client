@@ -172,7 +172,7 @@ export function FilePanel({ host }: Props) {
             <input
               className="todo-input"
               value={draft}
-              placeholder="添加待办，回车确认"
+              placeholder="添加待办，按 Enter 保存"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") submitTodo();
